@@ -12,26 +12,37 @@ struct FrameSelector {
         let quality: FrameQualityScore
     }
 
-    private var best: Candidate?
+    private var bestAcceptable: Candidate?
+    /// Fallback when nothing passes strict gates — smooth objects like printers often fail sharpness.
+    private var bestEffort: Candidate?
 
     mutating func reset() {
-        best = nil
+        bestAcceptable = nil
+        bestEffort = nil
     }
 
     mutating func consider(_ jpeg: Data) {
         let quality = FrameQuality.assess(jpeg)
+
+        if bestEffort == nil || quality.score > bestEffort!.quality.score {
+            bestEffort = Candidate(jpeg: jpeg, quality: quality)
+        }
+
         guard quality.isAcceptable else { return }
 
-        if best == nil || quality.score > best!.quality.score {
-            best = Candidate(jpeg: jpeg, quality: quality)
+        if bestAcceptable == nil || quality.score > bestAcceptable!.quality.score {
+            bestAcceptable = Candidate(jpeg: jpeg, quality: quality)
         }
     }
 
-    func selectedJPEG() -> Data? {
-        best?.jpeg
+    func selectedJPEG(preferStrictQuality: Bool) -> Data? {
+        if preferStrictQuality, let bestAcceptable {
+            return bestAcceptable.jpeg
+        }
+        return bestAcceptable?.jpeg ?? bestEffort?.jpeg
     }
 
-    var hasAcceptableFrame: Bool {
-        best != nil
+    var hasAnyFrame: Bool {
+        bestAcceptable != nil || bestEffort != nil
     }
 }

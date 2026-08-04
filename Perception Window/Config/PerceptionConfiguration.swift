@@ -42,7 +42,7 @@ enum PerceptionConfiguration {
 
     // MARK: - On-device frame quality gates
 
-    static let minimumSharpness: Float = 18
-    static let minimumBrightness: Float = 0.12
-    static let maximumBrightness: Float = 0.92
+    static let minimumSharpness: Float = 5
+    static let minimumBrightness: Float = 0.08
+    static let maximumBrightness: Float = 0.96
 }

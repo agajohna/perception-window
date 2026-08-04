@@ -36,8 +36,13 @@ struct SubjectIdentifier {
             domain: .electronics,
             firstVisitPrimary: "Zebra ZP505",
             firstVisitDetail: "Thermal label printer.\nReady for 4×6 shipping labels.",
-            classificationKeywords: ["printer", "printing", "label", "office", "equipment", "machine"],
-            textKeywords: ["zebra", "zp505", "zp 505", "thermal", "printer"]
+            classificationKeywords: [
+                "printer", "printing", "print", "label", "thermal", "barcode",
+                "office", "equipment", "machine", "peripheral", "appliance",
+                "photocopier", "copier", "fax", "gadget", "hardware", "device",
+                "electronics", "electronic", "supply", "supplies"
+            ],
+            textKeywords: ["zebra", "zp505", "zp 505", "zp-505", "thermal", "printer", "zp"]
         ),
         CatalogEntry(
             temporarySubjectKey: "device_computer_macmini",
@@ -163,11 +168,16 @@ struct SubjectIdentifier {
             }
         }
 
-        for (identifier, confidence) in classifications where confidence > 0.05 {
+        for (identifier, confidence) in classifications where confidence > 0.02 {
             let normalized = identifier.lowercased().replacingOccurrences(of: "_", with: " ")
             for entry in catalog {
                 if entry.classificationKeywords.contains(where: { normalized.contains($0) }) {
-                    let score = confidence * Float(profile.weight(for: entry.domain))
+                    var score = confidence * Float(profile.weight(for: entry.domain))
+                    // Prefer explicit text hits over vague classification.
+                    if entry.temporarySubjectKey == "device_printer_zebra",
+                       normalized.contains("print") || normalized.contains("label") || normalized.contains("office") {
+                        score += 0.15
+                    }
                     if best == nil || score > best!.score {
                         best = (entry, score)
                     }
@@ -182,7 +192,7 @@ struct SubjectIdentifier {
         var output: [(String, Float)] = []
         let request = VNClassifyImageRequest { request, _ in
             output = (request.results as? [VNClassificationObservation])?
-                .prefix(12)
+                .prefix(20)
                 .map { ($0.identifier, $0.confidence) } ?? []
         }
         try? handler.perform([request])
@@ -195,7 +205,8 @@ struct SubjectIdentifier {
             output = (request.results as? [VNRecognizedTextObservation])?
                 .compactMap { $0.topCandidates(1).first?.string } ?? []
         }
-        request.recognitionLevel = .fast
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
         try? handler.perform([request])
         return output
     }

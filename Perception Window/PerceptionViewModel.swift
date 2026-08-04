@@ -20,6 +20,7 @@ final class PerceptionViewModel {
     private(set) var observationOpacity: Double = 0
 
     private let subjectIdentifier = SubjectIdentifier()
+    private let demoService = DemoPerceptionService()
     private let entityRegistry = EntityRegistry()
     private let continuityService = ContinuityService()
     private let analysisService = AnalysisService()
@@ -61,33 +62,57 @@ final class PerceptionViewModel {
         pendingObservation = nil
         currentEntityID = nil
         frameSelector.reset()
+        if let recent = frameRelay.latestJPEG {
+            frameSelector.consider(recent)
+        }
 
         Task { await requestBudget.beginHold() }
         startFocusFill()
     }
 
     func end() {
-        if let entityID = currentEntityID {
-            lastInspectionByEntity[entityID] = Date()
-            Task { await entityRegistry.recordVisit(for: entityID) }
-        }
+        let ringReady = focusIsComplete || focusProgress >= 0.2
 
         isPerceiving = false
         focusTask?.cancel()
         transitionTask?.cancel()
-        analysisTask?.cancel()
-        pendingObservation = nil
-        focusIsComplete = false
-        currentEntityID = nil
-        frameSelector.reset()
+
+        if !analysisCompletedForHold && frameSelector.hasAnyFrame {
+            focusIsComplete = true
+            analyzeSelectedFrameOnce()
+        } else if ringReady && !analysisCompletedForHold {
+            focusIsComplete = true
+            analyzeSelectedFrameOnce()
+        }
 
         Task { @MainActor in
+            // Give on-device Vision a moment to finish after release.
+            for _ in 0..<50 where !analysisCompletedForHold {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+
+            tryRevealPendingObservation()
+
+            if displayedObservation != nil {
+                try? await Task.sleep(for: .milliseconds(900))
+            }
+
             withAnimation(.easeOut(duration: 0.25)) {
                 focusProgress = 0
                 observationOpacity = 0
             }
             try? await Task.sleep(for: .milliseconds(250))
+
+            if let entityID = currentEntityID {
+                lastInspectionByEntity[entityID] = Date()
+                await entityRegistry.recordVisit(for: entityID)
+            }
+
             displayedObservation = nil
+            pendingObservation = nil
+            focusIsComplete = false
+            currentEntityID = nil
+            frameSelector.reset()
         }
     }
 
@@ -122,7 +147,7 @@ final class PerceptionViewModel {
 
     /// One analysis per completed eye hold — after the ring fills and one good frame is chosen.
     private func analyzeSelectedFrameOnce() {
-        guard isPerceiving, !analysisCompletedForHold else { return }
+        guard !analysisCompletedForHold else { return }
 
         analysisTask?.cancel()
         analysisTask = Task { [weak self] in
@@ -131,21 +156,34 @@ final class PerceptionViewModel {
     }
 
     private func runSingleHoldAnalysis() async {
-        guard isPerceiving, !analysisCompletedForHold else { return }
+        guard !analysisCompletedForHold else { return }
 
-        guard let sourceJPEG = frameSelector.selectedJPEG() else {
+        let preferStrictQuality = !PerceptionConfiguration.useDemoPerception
+        guard let sourceJPEG = frameSelector.selectedJPEG(preferStrictQuality: preferStrictQuality) else {
             analysisCompletedForHold = true
             return
         }
 
-        let quality = FrameQuality.assess(sourceJPEG)
-        guard quality.isAcceptable else {
-            analysisCompletedForHold = true
-            return
+        if preferStrictQuality {
+            let quality = FrameQuality.assess(sourceJPEG)
+            guard quality.isAcceptable else {
+                analysisCompletedForHold = true
+                return
+            }
         }
 
         let profile = PerceptionConfiguration.curiosityProfile
-        let anchor = await subjectIdentifier.estimateAnchor(jpeg: sourceJPEG) ?? CGPoint(x: 0.5, y: 0.5)
+
+        // Match on the full source frame so OCR can read labels like "Zebra ZP505".
+        let resolution = await subjectIdentifier.identify(jpeg: sourceJPEG, profile: profile)
+        let anchor: CGPoint
+        if let resolution {
+            anchor = resolution.anchor
+        } else if let estimated = await subjectIdentifier.estimateAnchor(jpeg: sourceJPEG) {
+            anchor = estimated
+        } else {
+            anchor = CGPoint(x: 0.5, y: 0.5)
+        }
 
         guard let prepared = FramePreparation.prepare(sourceJPEG: sourceJPEG, anchor: anchor) else {
             analysisCompletedForHold = true
@@ -157,7 +195,7 @@ final class PerceptionViewModel {
         var comparisonStrategy: ComparisonStrategy?
         let result: AnalysisResult
 
-        if let resolution = await subjectIdentifier.identify(jpeg: prepared.analysisJPEG, profile: profile) {
+        if let resolution {
             let entity = await entityRegistry.resolve(
                 temporarySubjectKey: resolution.temporarySubjectKey,
                 matchConfidence: resolution.matchConfidence
@@ -216,8 +254,29 @@ final class PerceptionViewModel {
                 )
             }
         } else if PerceptionConfiguration.useDemoPerception {
-            analysisCompletedForHold = true
-            return
+            result = await demoService.perceive(jpeg: sourceJPEG, profile: profile)
+            if case .observation(let observation) = result.outcome,
+               let key = observation.temporarySubjectKey {
+                let entity = await entityRegistry.resolve(
+                    temporarySubjectKey: key,
+                    matchConfidence: 0.9
+                )
+                identity = SubjectIdentity(
+                    resolution: SubjectResolution(
+                        temporarySubjectKey: key,
+                        domain: observation.domain,
+                        anchor: observation.anchor,
+                        matchConfidence: 0.9,
+                        firstVisitPrimary: observation.primary,
+                        firstVisitDetail: observation.detail
+                    ),
+                    entity: entity
+                )
+                currentEntityID = entity.id
+            } else if case .silent = result.outcome {
+                analysisCompletedForHold = true
+                return
+            }
         } else {
             let budget = await requestBudget.canRequest(entityID: nil)
             guard budget.allowed else {
@@ -237,7 +296,6 @@ final class PerceptionViewModel {
             }
         }
 
-        guard isPerceiving else { return }
         analysisCompletedForHold = true
 
         await persistIfNeeded(
@@ -339,7 +397,7 @@ final class PerceptionViewModel {
     }
 
     private func tryRevealPendingObservation() {
-        guard isPerceiving, focusIsComplete, let observation = pendingObservation else { return }
+        guard focusIsComplete, let observation = pendingObservation else { return }
 
         if let current = displayedObservation {
             if current.primary == observation.primary {
@@ -388,6 +446,7 @@ final class PerceptionViewModel {
 
 private final class FrameRelay: @unchecked Sendable {
     var onJPEG: (@Sendable (Data) -> Void)?
+    private(set) var latestJPEG: Data?
 
     private var lastCaptureTime: TimeInterval = 0
     private let lock = NSLock()
@@ -402,6 +461,7 @@ private final class FrameRelay: @unchecked Sendable {
         lastCaptureTime = now
 
         guard let jpeg = FrameCapture.jpeg(from: sampleBuffer) else { return }
+        latestJPEG = jpeg
         onJPEG?(jpeg)
     }
 }

@@ -31,6 +31,16 @@ struct ContinuityService {
             )
         }
 
+        // Demo catalog mode — always show first-visit observation when recognized.
+        // Continuity comparison requires API; without it repeat visits went silent after baseline save.
+        if useDemoFirstVisit {
+            return await firstVisit(
+                preparedFrame: preparedFrame,
+                identity: identity,
+                useDemoFirstVisit: true
+            )
+        }
+
         if !hasBaseline {
             return await firstVisit(
                 preparedFrame: preparedFrame,

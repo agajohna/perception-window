@@ -41,12 +41,15 @@ struct DemoPerceptionService {
         DemoSubject(
             observation: "Zebra ZP505",
             detail: "Thermal label printer.\nReady for 4×6 shipping labels.",
-            subject: "printer",
+            subject: "device_printer_zebra",
             domain: .electronics,
             classificationKeywords: [
-                "printer", "printing", "label", "office", "equipment", "machine"
+                "printer", "printing", "print", "label", "thermal", "barcode",
+                "office", "equipment", "machine", "peripheral", "appliance",
+                "photocopier", "copier", "fax", "gadget", "hardware", "device",
+                "electronics", "electronic", "supply", "supplies"
             ],
-            textKeywords: ["zebra", "zp505", "zp 505", "thermal", "printer"]
+            textKeywords: ["zebra", "zp505", "zp 505", "zp-505", "thermal", "printer", "zp"]
         ),
         DemoSubject(
             observation: "Mac mini M4",
@@ -163,11 +166,15 @@ struct DemoPerceptionService {
             }
         }
 
-        for (identifier, confidence) in classifications where confidence > 0.05 {
+        for (identifier, confidence) in classifications where confidence > 0.02 {
             let normalized = identifier.lowercased().replacingOccurrences(of: "_", with: " ")
             for subject in catalog {
                 if subject.classificationKeywords.contains(where: { normalized.contains($0) }) {
-                    let weighted = confidence * Float(profile.weight(for: subject.domain))
+                    var weighted = confidence * Float(profile.weight(for: subject.domain))
+                    if subject.subject == "device_printer_zebra",
+                       normalized.contains("print") || normalized.contains("label") || normalized.contains("office") {
+                        weighted += 0.15
+                    }
                     matches.append(RankedMatch(subject: subject, score: weighted))
                 }
             }
@@ -180,7 +187,7 @@ struct DemoPerceptionService {
         var output: [(String, Float)] = []
         let request = VNClassifyImageRequest { request, _ in
             output = (request.results as? [VNClassificationObservation])?
-                .prefix(12)
+                .prefix(20)
                 .map { ($0.identifier, $0.confidence) } ?? []
         }
         try? handler.perform([request])
@@ -193,7 +200,8 @@ struct DemoPerceptionService {
             output = (request.results as? [VNRecognizedTextObservation])?
                 .compactMap { $0.topCandidates(1).first?.string } ?? []
         }
-        request.recognitionLevel = .fast
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
         try? handler.perform([request])
         return output
     }
