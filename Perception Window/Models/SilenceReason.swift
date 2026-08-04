@@ -12,6 +12,9 @@ enum SilenceReason: String, Codable, Equatable {
     case subjectMatchUncertain
     case comparisonUnavailable
     case modelFailure
+    case modelRefusal
+    case networkFailure
+    case rateLimited
     case sameSessionContinuation
     case noSubjectIdentified
 }

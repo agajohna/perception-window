@@ -5,6 +5,10 @@
 
 import Foundation
 
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
+
 enum PerceptionConfiguration {
     static let useDemoPerception = true
 
@@ -18,11 +22,27 @@ enum PerceptionConfiguration {
     static let attentionTransitionPause: TimeInterval = 0.5
 
     static let observationFadeDuration: TimeInterval = 0.35
-    static let resampleInterval: TimeInterval = 1.5
 
     /// Same entity within this window continues the current inspection — no continuity comparison.
     static let continuityRevisitInterval: TimeInterval = 120
 
+    /// Cooldown before another API request for the same entity.
+    static let requestCooldownInterval: TimeInterval = 120
+
     /// Minimum confidence to link a retrieval hint to an existing entity.
     static let subjectMatchThreshold: Float = 0.15
+
+    // MARK: - API cost guardrails
+
+    /// One analysis per completed eye hold — enforced by pipeline, not interval polling.
+    static let dailyRequestCeiling: Int = 100
+    static let maxAnalysisImageDimension: Int = 1024
+    static let analysisJPEGQuality: CGFloat = 0.82
+    static let maxResponseTokens: Int = 220
+
+    // MARK: - On-device frame quality gates
+
+    static let minimumSharpness: Float = 18
+    static let minimumBrightness: Float = 0.12
+    static let maximumBrightness: Float = 0.92
 }

@@ -6,6 +6,7 @@
 import Foundation
 
 enum APIConfiguration {
+    /// Local prototyping only — production must route through Curiosity backend.
     static var openAIAPIKey: String? {
         if let envKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"],
            !envKey.isEmpty {

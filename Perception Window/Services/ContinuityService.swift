@@ -11,7 +11,7 @@ struct ContinuityService {
     private let analysisService = AnalysisService()
 
     func perceive(
-        jpeg: Data,
+        preparedFrame: PreparedFrame,
         identity: SubjectIdentity,
         comparison: ComparisonSelection?,
         comparisonJPEG: Data?,
@@ -33,7 +33,7 @@ struct ContinuityService {
 
         if !hasBaseline {
             return await firstVisit(
-                jpeg: jpeg,
+                preparedFrame: preparedFrame,
                 identity: identity,
                 useDemoFirstVisit: useDemoFirstVisit
             )
@@ -44,7 +44,7 @@ struct ContinuityService {
         }
 
         return await compare(
-            currentJPEG: jpeg,
+            preparedFrame: preparedFrame,
             comparisonJPEG: comparisonJPEG,
             comparison: comparison,
             identity: identity
@@ -52,7 +52,7 @@ struct ContinuityService {
     }
 
     private func firstVisit(
-        jpeg: Data,
+        preparedFrame: PreparedFrame,
         identity: SubjectIdentity,
         useDemoFirstVisit: Bool
     ) async -> AnalysisResult {
@@ -74,7 +74,10 @@ struct ContinuityService {
         }
 
         do {
-            let result = try await analysisService.observe(jpeg: jpeg, identity: identity)
+            let result = try await analysisService.observe(
+                jpeg: preparedFrame.analysisJPEG,
+                identity: identity
+            )
             return AnalysisResult(
                 outcome: result.outcome,
                 rawResponse: result.rawResponse,
@@ -84,12 +87,12 @@ struct ContinuityService {
                 isBaseline: true
             )
         } catch {
-            return .silent(.modelFailure, rawResponse: "first:\(error)")
+            return Self.failureResult(for: error)
         }
     }
 
     private func compare(
-        currentJPEG: Data,
+        preparedFrame: PreparedFrame,
         comparisonJPEG: Data,
         comparison: ComparisonSelection,
         identity: SubjectIdentity
@@ -97,16 +100,23 @@ struct ContinuityService {
         if APIConfiguration.openAIAPIKey != nil {
             do {
                 return try await analysisService.compareContinuity(
-                    currentJPEG: currentJPEG,
+                    currentJPEG: preparedFrame.analysisJPEG,
                     priorJPEG: comparisonJPEG,
                     priorRecord: comparison.record,
                     identity: identity
                 )
             } catch {
-                return .silent(.modelFailure, rawResponse: "continuity:\(error)")
+                return Self.failureResult(for: error)
             }
         }
 
         return .silent(.comparisonUnavailable, rawResponse: "continuity:needs-api")
+    }
+
+    private static func failureResult(for error: Error) -> AnalysisResult {
+        if error is URLError {
+            return .silent(.networkFailure, rawResponse: "network:\(error.localizedDescription)")
+        }
+        return .silent(.modelFailure, rawResponse: "model:\(error.localizedDescription)")
     }
 }

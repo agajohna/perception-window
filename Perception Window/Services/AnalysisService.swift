@@ -32,20 +32,26 @@ struct AnalysisService {
     }
 
     private struct ContinuityPayload: Decodable {
+        let subjectMatch: Bool?
         let meaningfulChange: Bool?
         let observation: String?
         let detail: String?
         let evidence: [String]?
+        let comparisonConfidence: Double?
         let subjectMatchConfidence: Double?
+        let silenceReason: String?
         let focusX: Double?
         let focusY: Double?
 
         enum CodingKeys: String, CodingKey {
+            case subjectMatch = "subject_match"
             case meaningfulChange = "meaningful_change"
             case observation
             case detail
             case evidence
+            case comparisonConfidence = "comparison_confidence"
             case subjectMatchConfidence = "subject_match_confidence"
+            case silenceReason = "silence_reason"
             case focusX = "focus_x"
             case focusY = "focus_y"
         }
@@ -83,7 +89,7 @@ struct AnalysisService {
                 ]))
             ],
             responseFormat: .jsonObject,
-            maxTokens: 220
+            maxTokens: PerceptionConfiguration.maxResponseTokens
         )
 
         let rawResponse = try await performRequest(requestBody, apiKey: apiKey)
@@ -127,7 +133,7 @@ struct AnalysisService {
                 ]))
             ],
             responseFormat: .jsonObject,
-            maxTokens: 260
+            maxTokens: PerceptionConfiguration.maxResponseTokens
         )
 
         let rawResponse = try await performRequest(requestBody, apiKey: apiKey, timeout: 45)
@@ -212,12 +218,24 @@ struct AnalysisService {
         identity: SubjectIdentity,
         comparisonTargetID: UUID
     ) -> AnalysisResult {
-        let confidence = payload.subjectMatchConfidence ?? Double(identity.matchConfidence)
+        if payload.subjectMatch == false {
+            return .silent(
+                .subjectMatchUncertain,
+                rawResponse: rawResponse,
+                evidence: payload.evidence ?? [],
+                subjectMatchConfidence: payload.subjectMatchConfidence ?? Double(identity.matchConfidence),
+                comparisonTargetID: comparisonTargetID
+            )
+        }
+
+        let confidence = payload.comparisonConfidence
+            ?? payload.subjectMatchConfidence
+            ?? Double(identity.matchConfidence)
         let evidence = payload.evidence ?? []
 
         if payload.meaningfulChange == false {
             return .silent(
-                .noMeaningfulChange,
+                silenceReason(from: payload.silenceReason) ?? .noMeaningfulChange,
                 rawResponse: rawResponse,
                 evidence: evidence,
                 subjectMatchConfidence: confidence,
@@ -262,6 +280,20 @@ struct AnalysisService {
             subjectMatchConfidence: confidence,
             comparisonTargetID: comparisonTargetID
         )
+    }
+
+    private func silenceReason(from raw: String?) -> SilenceReason? {
+        guard let raw else { return nil }
+        switch raw.lowercased() {
+        case "no_meaningful_change": return .noMeaningfulChange
+        case "insufficient_image_quality": return .insufficientImageQuality
+        case "uncertain_subject_match", "subject_match_uncertain": return .subjectMatchUncertain
+        case "comparison_unavailable": return .comparisonUnavailable
+        case "model_refusal": return .modelRefusal
+        case "network_failure": return .networkFailure
+        case "rate_limit", "rate_limited": return .rateLimited
+        default: return nil
+        }
     }
 
     private func isSilenceResponse(_ text: String) -> Bool {
@@ -339,14 +371,20 @@ struct AnalysisService {
 
         Respond as JSON only:
         {
+          "subject_match": true,
           "meaningful_change": true or false,
           "observation": "string or null",
           "detail": "string or null",
           "evidence": ["short factual visual notes about what you compared"],
+          "comparison_confidence": 0.0-1.0,
           "subject_match_confidence": 0.0-1.0,
+          "silence_reason": "no_meaningful_change or null",
           "focus_x": 0.0-1.0,
           "focus_y": 0.0-1.0
         }
+
+        If nothing meaningful changed, set meaningful_change to false, observation to null,
+        and silence_reason to "no_meaningful_change".
         """
     }
 }

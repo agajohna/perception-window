@@ -125,6 +125,25 @@ struct SubjectIdentifier {
         #endif
     }
 
+    func estimateAnchor(jpeg: Data) async -> CGPoint? {
+        #if os(iOS)
+        return await Task.detached(priority: .utility) {
+            guard
+                let image = UIImage(data: jpeg),
+                let cgImage = image.cgImage
+            else {
+                return nil
+            }
+
+            let orientation = CGImagePropertyOrientation(image.imageOrientation)
+            let handler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
+            return Self.runSaliencyAnchor(handler: handler) ?? CGPoint(x: 0.5, y: 0.5)
+        }.value
+        #else
+        return nil
+        #endif
+    }
+
     #if os(iOS)
     private static func bestMatch(
         catalog: [CatalogEntry],

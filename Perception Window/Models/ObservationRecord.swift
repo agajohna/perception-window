@@ -12,6 +12,7 @@ struct ObservationRecord: Codable, Identifiable {
 
     // Evidence
     let frameFilename: String
+    let analysisFrameFilename: String?
     let cameraMetadata: CameraCaptureMetadata?
     let placeContext: PlaceContext?
 
@@ -45,6 +46,7 @@ struct ObservationRecord: Codable, Identifiable {
         entityID: UUID,
         timestamp: Date = Date(),
         frameFilename: String,
+        analysisFrameFilename: String? = nil,
         cameraMetadata: CameraCaptureMetadata? = nil,
         placeContext: PlaceContext? = nil,
         userFacingSentence: String? = nil,
@@ -66,6 +68,7 @@ struct ObservationRecord: Codable, Identifiable {
         self.entityID = entityID
         self.timestamp = timestamp
         self.frameFilename = frameFilename
+        self.analysisFrameFilename = analysisFrameFilename
         self.cameraMetadata = cameraMetadata
         self.placeContext = placeContext
         self.userFacingSentence = userFacingSentence
@@ -92,7 +95,7 @@ struct ObservationRecord: Codable, Identifiable {
     var modelResponse: String { rawModelResponse }
 
     enum CodingKeys: String, CodingKey {
-        case id, entityID, timestamp, frameFilename
+        case id, entityID, timestamp, frameFilename, analysisFrameFilename
         case cameraMetadata, placeContext
         case userFacingSentence, userFacingDetail, rawVisualFindings
         case temporarySubjectKey, subjectMatchConfidence
@@ -108,6 +111,7 @@ struct ObservationRecord: Codable, Identifiable {
         id = try container.decode(UUID.self, forKey: .id)
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         frameFilename = try container.decode(String.self, forKey: .frameFilename)
+        analysisFrameFilename = try container.decodeIfPresent(String.self, forKey: .analysisFrameFilename)
         focusX = try container.decodeIfPresent(Double.self, forKey: .focusX)
         focusY = try container.decodeIfPresent(Double.self, forKey: .focusY)
 
@@ -147,6 +151,7 @@ struct ObservationRecord: Codable, Identifiable {
         try container.encode(entityID, forKey: .entityID)
         try container.encode(timestamp, forKey: .timestamp)
         try container.encode(frameFilename, forKey: .frameFilename)
+        try container.encodeIfPresent(analysisFrameFilename, forKey: .analysisFrameFilename)
         try container.encodeIfPresent(cameraMetadata, forKey: .cameraMetadata)
         try container.encodeIfPresent(placeContext, forKey: .placeContext)
         try container.encodeIfPresent(userFacingSentence, forKey: .userFacingSentence)

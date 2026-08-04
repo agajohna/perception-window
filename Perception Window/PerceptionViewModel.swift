@@ -24,16 +24,16 @@ final class PerceptionViewModel {
     private let continuityService = ContinuityService()
     private let analysisService = AnalysisService()
     private let observationStore = ObservationStore()
+    private let requestBudget = AnalysisRequestBudget()
 
-    private var latestJPEG: Data?
-    private var samplingTask: Task<Void, Never>?
+    private var frameSelector = FrameSelector()
     private var focusTask: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
-    private var isAnalysisInFlight = false
+    private var analysisTask: Task<Void, Never>?
     private var pendingObservation: PerceptionObservation?
     private var focusIsComplete = false
+    private var analysisCompletedForHold = false
 
-    /// Last completed inspection per entity — drives session vs revisit behavior.
     private var lastInspectionByEntity: [UUID: Date] = [:]
     private var currentEntityID: UUID?
 
@@ -42,7 +42,7 @@ final class PerceptionViewModel {
     func attach(to camera: CameraService) {
         frameRelay.onJPEG = { [weak self] jpeg in
             Task { @MainActor in
-                self?.updateLatestFrame(jpeg)
+                self?.accumulateFrame(jpeg)
             }
         }
 
@@ -55,31 +55,31 @@ final class PerceptionViewModel {
         isPerceiving = true
         focusProgress = 0
         focusIsComplete = false
+        analysisCompletedForHold = false
         displayedObservation = nil
         observationOpacity = 0
         pendingObservation = nil
         currentEntityID = nil
+        frameSelector.reset()
 
+        Task { await requestBudget.beginHold() }
         startFocusFill()
-        startSamplingLoop()
     }
 
     func end() {
         if let entityID = currentEntityID {
             lastInspectionByEntity[entityID] = Date()
-            Task {
-                await entityRegistry.recordVisit(for: entityID)
-            }
+            Task { await entityRegistry.recordVisit(for: entityID) }
         }
 
         isPerceiving = false
-        samplingTask?.cancel()
         focusTask?.cancel()
         transitionTask?.cancel()
-        isAnalysisInFlight = false
+        analysisTask?.cancel()
         pendingObservation = nil
         focusIsComplete = false
         currentEntityID = nil
+        frameSelector.reset()
 
         Task { @MainActor in
             withAnimation(.easeOut(duration: 0.25)) {
@@ -88,13 +88,13 @@ final class PerceptionViewModel {
             }
             try? await Task.sleep(for: .milliseconds(250))
             displayedObservation = nil
-            latestJPEG = nil
         }
     }
 
-    private func updateLatestFrame(_ jpeg: Data) {
-        guard isPerceiving else { return }
-        latestJPEG = jpeg
+    /// Camera runs continuously; we only collect candidates until the hold completes.
+    private func accumulateFrame(_ jpeg: Data) {
+        guard isPerceiving, !analysisCompletedForHold else { return }
+        frameSelector.consider(jpeg)
     }
 
     private func startFocusFill() {
@@ -114,43 +114,50 @@ final class PerceptionViewModel {
 
             await MainActor.run {
                 self?.focusIsComplete = true
+                self?.analyzeSelectedFrameOnce()
                 self?.tryRevealPendingObservation()
             }
         }
     }
 
-    private func startSamplingLoop() {
-        samplingTask?.cancel()
-        samplingTask = Task { [weak self] in
-            await self?.sampleAndAnalyze()
+    /// One analysis per completed eye hold — after the ring fills and one good frame is chosen.
+    private func analyzeSelectedFrameOnce() {
+        guard isPerceiving, !analysisCompletedForHold else { return }
 
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(PerceptionConfiguration.resampleInterval))
-                guard !Task.isCancelled else { break }
-                await self?.sampleAndAnalyze()
-            }
+        analysisTask?.cancel()
+        analysisTask = Task { [weak self] in
+            await self?.runSingleHoldAnalysis()
         }
     }
 
-    private func sampleAndAnalyze() async {
-        guard isPerceiving, !isAnalysisInFlight else { return }
+    private func runSingleHoldAnalysis() async {
+        guard isPerceiving, !analysisCompletedForHold else { return }
 
-        if latestJPEG == nil {
-            try? await Task.sleep(for: .milliseconds(200))
+        guard let sourceJPEG = frameSelector.selectedJPEG() else {
+            analysisCompletedForHold = true
+            return
         }
 
-        guard let jpeg = latestJPEG else { return }
-
-        isAnalysisInFlight = true
-        defer { isAnalysisInFlight = false }
+        let quality = FrameQuality.assess(sourceJPEG)
+        guard quality.isAcceptable else {
+            analysisCompletedForHold = true
+            return
+        }
 
         let profile = PerceptionConfiguration.curiosityProfile
-        let cameraMetadata = Self.cameraMetadata(for: jpeg)
-        let result: AnalysisResult
+        let anchor = await subjectIdentifier.estimateAnchor(jpeg: sourceJPEG) ?? CGPoint(x: 0.5, y: 0.5)
+
+        guard let prepared = FramePreparation.prepare(sourceJPEG: sourceJPEG, anchor: anchor) else {
+            analysisCompletedForHold = true
+            return
+        }
+
+        let cameraMetadata = Self.cameraMetadata(for: prepared.sourceJPEG)
         var identity: SubjectIdentity?
         var comparisonStrategy: ComparisonStrategy?
+        let result: AnalysisResult
 
-        if let resolution = await subjectIdentifier.identify(jpeg: jpeg, profile: profile) {
+        if let resolution = await subjectIdentifier.identify(jpeg: prepared.analysisJPEG, profile: profile) {
             let entity = await entityRegistry.resolve(
                 temporarySubjectKey: resolution.temporarySubjectKey,
                 matchConfidence: resolution.matchConfidence
@@ -171,11 +178,22 @@ final class PerceptionViewModel {
 
             var comparisonJPEG: Data?
             if let comparison {
-                comparisonJPEG = await observationStore.frameJPEG(for: comparison.record)
+                comparisonJPEG = await observationStore.analysisJPEG(for: comparison.record)
+            }
+
+            let needsAPI = !PerceptionConfiguration.useDemoPerception
+                && (!hasBaseline || (comparison != nil && !isSameSession))
+
+            if needsAPI {
+                let budget = await requestBudget.canRequest(entityID: entity.id)
+                if !budget.allowed {
+                    analysisCompletedForHold = true
+                    return
+                }
             }
 
             result = await continuityService.perceive(
-                jpeg: jpeg,
+                preparedFrame: prepared,
                 identity: identity!,
                 comparison: comparison,
                 comparisonJPEG: comparisonJPEG,
@@ -183,20 +201,47 @@ final class PerceptionViewModel {
                 isSameSession: isSameSession,
                 useDemoFirstVisit: PerceptionConfiguration.useDemoPerception
             )
+
+            if needsAPI, case .observation = result.outcome {
+                await requestBudget.recordRequest(
+                    stage: hasBaseline ? .continuityComparison : .firstObservation,
+                    entityID: entity.id,
+                    analysisImageBytes: prepared.analysisJPEG.count
+                )
+            } else if needsAPI, case .silent(let reason) = result.outcome, reason == .noMeaningfulChange {
+                await requestBudget.recordRequest(
+                    stage: .continuityComparison,
+                    entityID: entity.id,
+                    analysisImageBytes: prepared.analysisJPEG.count
+                )
+            }
         } else if PerceptionConfiguration.useDemoPerception {
-            result = .silent(.noSubjectIdentified, rawResponse: "identify:none")
+            analysisCompletedForHold = true
+            return
         } else {
+            let budget = await requestBudget.canRequest(entityID: nil)
+            guard budget.allowed else {
+                analysisCompletedForHold = true
+                return
+            }
+
             do {
-                result = try await analysisService.analyze(jpeg: jpeg)
+                result = try await analysisService.analyze(jpeg: prepared.analysisJPEG)
+                await requestBudget.recordRequest(
+                    stage: .firstObservation,
+                    entityID: nil,
+                    analysisImageBytes: prepared.analysisJPEG.count
+                )
             } catch {
-                result = .silent(.modelFailure, rawResponse: "analyze:\(error)")
+                result = Self.failureResult(for: error)
             }
         }
 
         guard isPerceiving else { return }
+        analysisCompletedForHold = true
 
         await persistIfNeeded(
-            jpeg: jpeg,
+            preparedFrame: prepared,
             identity: identity,
             result: result,
             cameraMetadata: cameraMetadata,
@@ -204,10 +249,11 @@ final class PerceptionViewModel {
         )
 
         apply(result)
+        tryRevealPendingObservation()
     }
 
     private func persistIfNeeded(
-        jpeg: Data,
+        preparedFrame: PreparedFrame,
         identity: SubjectIdentity?,
         result: AnalysisResult,
         cameraMetadata: CameraCaptureMetadata?,
@@ -217,7 +263,7 @@ final class PerceptionViewModel {
         case .observation:
             if let entityID = identity?.persistentEntityID {
                 _ = try? await observationStore.save(
-                    frameJPEG: jpeg,
+                    preparedFrame: preparedFrame,
                     entityID: entityID,
                     identity: identity,
                     result: result,
@@ -230,7 +276,7 @@ final class PerceptionViewModel {
 
             if result.isBaseline, let entityID = identity?.persistentEntityID {
                 _ = try? await observationStore.save(
-                    frameJPEG: jpeg,
+                    preparedFrame: preparedFrame,
                     entityID: entityID,
                     identity: identity,
                     result: result,
@@ -242,7 +288,7 @@ final class PerceptionViewModel {
 
             if reason == .noMeaningfulChange, let entityID = identity?.persistentEntityID {
                 _ = try? await observationStore.save(
-                    frameJPEG: jpeg,
+                    preparedFrame: preparedFrame,
                     entityID: entityID,
                     identity: identity,
                     result: result,
@@ -261,9 +307,7 @@ final class PerceptionViewModel {
                 profile.reinforce(domain)
                 PerceptionConfiguration.curiosityProfile = profile
             }
-
             pendingObservation = observation
-            tryRevealPendingObservation()
         case .silent:
             break
         }
@@ -272,6 +316,13 @@ final class PerceptionViewModel {
     private static func isSameSession(entityID: UUID, lastInspectionByEntity: [UUID: Date]) -> Bool {
         guard let last = lastInspectionByEntity[entityID] else { return false }
         return Date().timeIntervalSince(last) < PerceptionConfiguration.continuityRevisitInterval
+    }
+
+    private static func failureResult(for error: Error) -> AnalysisResult {
+        if error is URLError {
+            return .silent(.networkFailure, rawResponse: "network:\(error.localizedDescription)")
+        }
+        return .silent(.modelFailure, rawResponse: "model:\(error.localizedDescription)")
     }
 
     private static func cameraMetadata(for jpeg: Data) -> CameraCaptureMetadata {
@@ -318,9 +369,7 @@ final class PerceptionViewModel {
             try? await Task.sleep(for: .seconds(PerceptionConfiguration.observationFadeDuration))
             guard !Task.isCancelled, self?.isPerceiving == true else { return }
 
-            await MainActor.run {
-                self?.displayedObservation = nil
-            }
+            await MainActor.run { self?.displayedObservation = nil }
 
             try? await Task.sleep(for: .seconds(PerceptionConfiguration.attentionTransitionPause))
             guard !Task.isCancelled, self?.isPerceiving == true else { return }

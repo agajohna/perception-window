@@ -85,6 +85,17 @@ actor ObservationStore {
         return try? Data(contentsOf: url)
     }
 
+    /// Cropped/resized frame used for API comparison — falls back to source frame.
+    func analysisJPEG(for record: ObservationRecord) -> Data? {
+        if let analysisFrameFilename = record.analysisFrameFilename {
+            let url = folderURL(for: record).appendingPathComponent(analysisFrameFilename)
+            if let data = try? Data(contentsOf: url) {
+                return data
+            }
+        }
+        return frameJPEG(for: record)
+    }
+
     func hasBaseline(forEntity entityID: UUID) -> Bool {
         records(forEntity: entityID).contains { $0.isBaseline }
     }
@@ -93,7 +104,7 @@ actor ObservationStore {
 
     @discardableResult
     func save(
-        frameJPEG: Data,
+        preparedFrame: PreparedFrame,
         entityID: UUID,
         identity: SubjectIdentity?,
         result: AnalysisResult,
@@ -106,7 +117,9 @@ actor ObservationStore {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
         let frameFilename = "frame.jpg"
-        try frameJPEG.write(to: folder.appendingPathComponent(frameFilename))
+        let analysisFrameFilename = "analysis.jpg"
+        try preparedFrame.sourceJPEG.write(to: folder.appendingPathComponent(frameFilename))
+        try preparedFrame.analysisJPEG.write(to: folder.appendingPathComponent(analysisFrameFilename))
 
         let userFacingSentence: String?
         let userFacingDetail: String?
@@ -133,6 +146,7 @@ actor ObservationStore {
             id: id,
             entityID: entityID,
             frameFilename: frameFilename,
+            analysisFrameFilename: analysisFrameFilename,
             cameraMetadata: cameraMetadata,
             placeContext: placeContext,
             userFacingSentence: userFacingSentence,
