@@ -18,6 +18,8 @@ final class PerceptionViewModel {
     private(set) var focusProgress: Double = 0
     private(set) var displayedObservation: PerceptionObservation?
     private(set) var observationOpacity: Double = 0
+    private(set) var isLensActive = false
+    private(set) var lensAnchor = CGPoint(x: 0.5, y: 0.5)
 
     private let subjectIdentifier = SubjectIdentifier()
     private let demoService = DemoPerceptionService()
@@ -62,6 +64,7 @@ final class PerceptionViewModel {
         pendingObservation = nil
         currentEntityID = nil
         frameSelector.reset()
+        deactivateLens()
         if let recent = frameRelay.latestJPEG {
             frameSelector.consider(recent)
         }
@@ -73,6 +76,7 @@ final class PerceptionViewModel {
     func end() {
         let ringReady = focusIsComplete || focusProgress >= 0.2
 
+        deactivateLens()
         isPerceiving = false
         focusTask?.cancel()
         transitionTask?.cancel()
@@ -113,7 +117,17 @@ final class PerceptionViewModel {
             focusIsComplete = false
             currentEntityID = nil
             frameSelector.reset()
+            deactivateLens()
         }
+    }
+
+    private func activateLens(at anchor: CGPoint) {
+        lensAnchor = anchor
+        isLensActive = true
+    }
+
+    private func deactivateLens() {
+        isLensActive = false
     }
 
     /// Camera runs continuously; we only collect candidates until the hold completes.
@@ -196,6 +210,7 @@ final class PerceptionViewModel {
         let result: AnalysisResult
 
         if let resolution {
+            activateLens(at: resolution.anchor)
             let entity = await entityRegistry.resolve(
                 temporarySubjectKey: resolution.temporarySubjectKey,
                 matchConfidence: resolution.matchConfidence
@@ -257,6 +272,7 @@ final class PerceptionViewModel {
             result = await demoService.perceive(jpeg: sourceJPEG, profile: profile)
             if case .observation(let observation) = result.outcome,
                let key = observation.temporarySubjectKey {
+                activateLens(at: observation.anchor)
                 let entity = await entityRegistry.resolve(
                     temporarySubjectKey: key,
                     matchConfidence: 0.9

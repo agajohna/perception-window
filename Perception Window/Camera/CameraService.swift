@@ -22,6 +22,7 @@ final class CameraService: NSObject {
 
     nonisolated(unsafe) private let sessionQueue = DispatchQueue(label: "home.perception-window.camera")
     nonisolated(unsafe) private var isConfigured = false
+    nonisolated(unsafe) private var captureDevice: AVCaptureDevice?
     nonisolated(unsafe) var onFrame: (@Sendable (CMSampleBuffer) -> Void)?
 
     override init() {
@@ -48,6 +49,8 @@ final class CameraService: NSObject {
 
     nonisolated func start() {
         sessionQueue.async { [self] in
+            configureIfNeeded()
+            applyPerceptualBaselineZoomIfNeeded()
             guard !session.isRunning else { return }
             session.startRunning()
             Task { @MainActor in
@@ -93,6 +96,7 @@ final class CameraService: NSObject {
         }
 
         session.addInput(input)
+        captureDevice = device
 
         let output = AVCaptureVideoDataOutput()
         output.videoSettings = [
@@ -104,6 +108,25 @@ final class CameraService: NSObject {
         guard session.canAddOutput(output) else { return }
         session.addOutput(output)
         isConfigured = true
+    }
+
+    /// Physical zoom applied after session configuration — Curiosity perceptual 1.0× window state.
+    nonisolated private func applyPerceptualBaselineZoomIfNeeded() {
+        guard let device = captureDevice else { return }
+        let target = PerceptionConfiguration.perceptualBaselineZoom
+        guard target > 1.0 else { return }
+
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            let clamped = min(
+                max(target, device.minAvailableVideoZoomFactor),
+                device.activeFormat.videoMaxZoomFactor
+            )
+            device.videoZoomFactor = clamped
+        } catch {
+            // Baseline zoom is best-effort — preview still works at 1.0×.
+        }
     }
 }
 

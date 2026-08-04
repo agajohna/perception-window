@@ -45,4 +45,21 @@ enum PerceptionConfiguration {
     static let minimumSharpness: Float = 5
     static let minimumBrightness: Float = 0.08
     static let maximumBrightness: Float = 0.96
+
+    // MARK: - Perceptual window
+
+    /// Physical camera zoom that reads as neutral 1.0× — device-specific perceptual handicap.
+    /// Test candidates: 1.00, 1.10, 1.18, 1.25, 1.30
+    static let perceptualBaselineZoom: CGFloat = 1.18
+
+    /// Conceptual neutral after baseline is applied — not applied to the device again.
+    static let windowScale: CGFloat = 1.0
+
+    /// Local subject magnification during lens state, relative to the window baseline.
+    static let lensMagnification: CGFloat = 1.25
+
+    /// Radius of the local lens region in points.
+    static let lensRegionRadius: CGFloat = 88
+
+    static let lensAnimationDuration: TimeInterval = 0.45
 }
