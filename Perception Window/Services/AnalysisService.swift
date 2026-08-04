@@ -3,6 +3,7 @@
 //  Perception Window
 //
 
+import CoreGraphics
 import Foundation
 
 struct AnalysisService {
@@ -12,12 +13,13 @@ struct AnalysisService {
         case requestFailed(String)
     }
 
-    private struct ModelPayload: Decodable {
+    private struct ObservationPayload: Decodable {
         let primary: String?
         let detail: String?
         let focusX: Double?
         let focusY: Double?
         let subject: String?
+        let evidence: [String]?
 
         enum CodingKeys: String, CodingKey {
             case primary
@@ -25,6 +27,27 @@ struct AnalysisService {
             case focusX = "focus_x"
             case focusY = "focus_y"
             case subject
+            case evidence
+        }
+    }
+
+    private struct ContinuityPayload: Decodable {
+        let meaningfulChange: Bool?
+        let observation: String?
+        let detail: String?
+        let evidence: [String]?
+        let subjectMatchConfidence: Double?
+        let focusX: Double?
+        let focusY: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case meaningfulChange = "meaningful_change"
+            case observation
+            case detail
+            case evidence
+            case subjectMatchConfidence = "subject_match_confidence"
+            case focusX = "focus_x"
+            case focusY = "focus_y"
         }
     }
 
@@ -41,6 +64,10 @@ struct AnalysisService {
     }
 
     func analyze(jpeg: Data) async throws -> AnalysisResult {
+        try await observe(jpeg: jpeg, identity: nil)
+    }
+
+    func observe(jpeg: Data, identity: SubjectIdentity?) async throws -> AnalysisResult {
         guard let apiKey = APIConfiguration.openAIAPIKey else {
             throw AnalysisError.missingAPIKey
         }
@@ -59,64 +86,182 @@ struct AnalysisService {
             maxTokens: 220
         )
 
+        let rawResponse = try await performRequest(requestBody, apiKey: apiKey)
+        guard let content = rawResponse.data(using: .utf8) else {
+            throw AnalysisError.invalidResponse
+        }
+
+        let payload = try JSONDecoder().decode(ObservationPayload.self, from: content)
+        return parseObservation(payload, rawResponse: rawResponse, identity: identity)
+    }
+
+    func compareContinuity(
+        currentJPEG: Data,
+        priorJPEG: Data,
+        priorRecord: ObservationRecord,
+        identity: SubjectIdentity
+    ) async throws -> AnalysisResult {
+        guard let apiKey = APIConfiguration.openAIAPIKey else {
+            throw AnalysisError.missingAPIKey
+        }
+
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        let relative = formatter.localizedString(for: priorRecord.timestamp, relativeTo: Date())
+        let priorSentence = priorRecord.userFacingSentence ?? "No prior sentence recorded."
+
+        let requestBody = ChatCompletionRequest(
+            model: APIConfiguration.model,
+            messages: [
+                .init(role: "system", content: .text(continuitySystemPrompt)),
+                .init(role: "user", content: .parts([
+                    .text("""
+                    The user is looking at something familiar — not new to them.
+                    Previous observation (\(relative)): \(priorSentence)
+
+                    Image 1 is from the earlier visit. Image 2 is now.
+                    What has meaningfully changed? Do not re-identify or re-introduce the subject.
+                    """),
+                    .imageURL("data:image/jpeg;base64,\(priorJPEG.base64EncodedString())"),
+                    .imageURL("data:image/jpeg;base64,\(currentJPEG.base64EncodedString())")
+                ]))
+            ],
+            responseFormat: .jsonObject,
+            maxTokens: 260
+        )
+
+        let rawResponse = try await performRequest(requestBody, apiKey: apiKey, timeout: 45)
+        guard let content = rawResponse.data(using: .utf8) else {
+            throw AnalysisError.invalidResponse
+        }
+
+        let payload = try JSONDecoder().decode(ContinuityPayload.self, from: content)
+        return parseContinuity(
+            payload,
+            rawResponse: rawResponse,
+            identity: identity,
+            comparisonTargetID: priorRecord.id
+        )
+    }
+
+    private func performRequest(
+        _ requestBody: ChatCompletionRequest,
+        apiKey: String,
+        timeout: TimeInterval = 30
+    ) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(requestBody)
-        request.timeoutInterval = 30
+        request.timeoutInterval = timeout
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
-        guard let http = response as? HTTPURLResponse else {
-            throw AnalysisError.invalidResponse
-        }
-
-        guard (200...299).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? "Unknown error"
             throw AnalysisError.requestFailed(message)
         }
 
         let completion = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
-        guard let content = completion.choices.first?.message.content.data(using: .utf8) else {
+        guard let content = completion.choices.first?.message.content else {
             throw AnalysisError.invalidResponse
         }
-
-        let payload = try JSONDecoder().decode(ModelPayload.self, from: content)
-        return parse(payload, rawResponse: completion.choices.first?.message.content ?? "")
+        return content
     }
 
-    private func parse(_ payload: ModelPayload, rawResponse: String) -> AnalysisResult {
+    private func parseObservation(
+        _ payload: ObservationPayload,
+        rawResponse: String,
+        identity: SubjectIdentity?
+    ) -> AnalysisResult {
         guard
             let primary = payload.primary?.trimmingCharacters(in: .whitespacesAndNewlines),
             !primary.isEmpty,
             !isSilenceResponse(primary)
         else {
-            return AnalysisResult(outcome: .nothingVisible, rawResponse: rawResponse)
+            return .silent(.noMeaningfulChange, rawResponse: rawResponse, evidence: payload.evidence ?? [])
         }
 
         let detail = payload.detail?.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedDetail = (detail?.isEmpty == false) ? detail : nil
-
-        if let detail = cleanedDetail, isSilenceResponse(detail) {
-            return AnalysisResult(outcome: .nothingVisible, rawResponse: rawResponse)
-        }
-
-        // One observation only — detail is folded into primary when present.
         let primaryText = cleanedDetail.map { "\(primary). \($0)" } ?? primary
 
-        let anchorX = payload.focusX ?? 0.5
-        let anchorY = payload.focusY ?? 0.5
+        let anchorX = payload.focusX ?? identity.map { Double($0.anchor.x) } ?? 0.5
+        let anchorY = payload.focusY ?? identity.map { Double($0.anchor.y) } ?? 0.5
 
         let observation = PerceptionObservation(
             primary: primaryText,
             detail: cleanedDetail,
-            subject: payload.subject?.trimmingCharacters(in: .whitespacesAndNewlines),
-            domain: nil,
+            entityID: identity?.persistentEntityID,
+            temporarySubjectKey: identity?.temporarySubjectKey,
+            domain: identity?.domain,
             anchor: CGPoint(x: anchorX, y: anchorY)
         )
 
-        return AnalysisResult(outcome: .observation(observation), rawResponse: rawResponse)
+        return AnalysisResult(
+            outcome: .observation(observation),
+            rawResponse: rawResponse,
+            evidence: payload.evidence ?? []
+        )
+    }
+
+    private func parseContinuity(
+        _ payload: ContinuityPayload,
+        rawResponse: String,
+        identity: SubjectIdentity,
+        comparisonTargetID: UUID
+    ) -> AnalysisResult {
+        let confidence = payload.subjectMatchConfidence ?? Double(identity.matchConfidence)
+        let evidence = payload.evidence ?? []
+
+        if payload.meaningfulChange == false {
+            return .silent(
+                .noMeaningfulChange,
+                rawResponse: rawResponse,
+                evidence: evidence,
+                subjectMatchConfidence: confidence,
+                comparisonTargetID: comparisonTargetID
+            )
+        }
+
+        guard
+            let primary = payload.observation?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !primary.isEmpty,
+            !isSilenceResponse(primary)
+        else {
+            return .silent(
+                .noMeaningfulChange,
+                rawResponse: rawResponse,
+                evidence: evidence,
+                subjectMatchConfidence: confidence,
+                comparisonTargetID: comparisonTargetID
+            )
+        }
+
+        let detail = payload.detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedDetail = (detail?.isEmpty == false) ? detail : nil
+        let primaryText = cleanedDetail.map { "\(primary). \($0)" } ?? primary
+
+        let anchorX = payload.focusX ?? Double(identity.anchor.x)
+        let anchorY = payload.focusY ?? Double(identity.anchor.y)
+
+        let observation = PerceptionObservation(
+            primary: primaryText,
+            detail: cleanedDetail,
+            entityID: identity.persistentEntityID,
+            temporarySubjectKey: identity.temporarySubjectKey,
+            domain: identity.domain,
+            anchor: CGPoint(x: anchorX, y: anchorY)
+        )
+
+        return AnalysisResult(
+            outcome: .observation(observation),
+            rawResponse: rawResponse,
+            evidence: evidence,
+            subjectMatchConfidence: confidence,
+            comparisonTargetID: comparisonTargetID
+        )
     }
 
     private func isSilenceResponse(_ text: String) -> Bool {
@@ -135,7 +280,13 @@ struct AnalysisService {
             "nothing notable",
             "no finding",
             "no findings",
-            "none visible"
+            "none visible",
+            "nothing changed",
+            "no visible change",
+            "no change",
+            "unchanged",
+            "same as before",
+            "same as last"
         ]
         return silencePhrases.contains { normalized.contains($0) }
     }
@@ -152,37 +303,51 @@ struct AnalysisService {
         - Return one observation about why this is worth noticing.
         - If nothing is reasonably worth saying, return primary as null.
         - Never diagnose with certainty. Use tentative language.
-        - Do not assign numeric confidence.
         - Do not list multiple findings.
         - Do not describe the entire scene.
         - Do not reassure that everything looks fine.
-
-        Good examples:
-        primary: "New flower bud emerging"
-        primary: "This shoot may originate below the graft union"
-        primary: "Possible early chlorosis"
-        primary: "Uneven yellowing on older leaves"
-
-        Bad examples (too much like object ID):
-        primary: "Coffee plant"
-        primary: "Printer"
-        primary: "Leaf"
 
         Respond as JSON only:
         {
           "primary": "string or null",
           "detail": "string or null",
+          "evidence": ["short factual visual notes"],
           "focus_x": 0.0-1.0,
           "focus_y": 0.0-1.0,
-          "subject": "internal only, not shown to user"
+          "subject": "internal retrieval hint only"
         }
-
-        focus_x and focus_y mark where the observation applies, origin top-left.
         """
     }
 
     private var userPrompt: String {
         "Why might this be interesting to look at?"
+    }
+
+    private var continuitySystemPrompt: String {
+        """
+        You help someone notice what has changed since they last looked.
+
+        The user already knows what they are looking at. Do not name, classify, or re-introduce the subject.
+        Compare the two images honestly. It is correct and preferred to report no meaningful change.
+
+        Your job is narrow:
+        - Focus on visible change — growth, damage, new elements, shifted state.
+        - If nothing meaningful has changed, set meaningful_change to false and observation to null.
+        - Never pressure yourself to invent progress.
+        - Never diagnose with certainty. Use tentative language.
+        - Do not list multiple findings.
+
+        Respond as JSON only:
+        {
+          "meaningful_change": true or false,
+          "observation": "string or null",
+          "detail": "string or null",
+          "evidence": ["short factual visual notes about what you compared"],
+          "subject_match_confidence": 0.0-1.0,
+          "focus_x": 0.0-1.0,
+          "focus_y": 0.0-1.0
+        }
+        """
     }
 }
 

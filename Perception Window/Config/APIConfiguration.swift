@@ -26,4 +26,5 @@ enum APIConfiguration {
     }
 
     static let model = "gpt-4o"
+    static let modelVersion = "2026-08"
 }

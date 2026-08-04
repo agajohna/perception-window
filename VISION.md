@@ -1,30 +1,20 @@
 # Curiosity Labs — Vision
 
-We're not building an AI camera. We're building a new interaction model.
+We're not building an AI camera or visual search product. We're building a new interaction model.
 
-**Mission:** Built for curiosity. Curiosity deserves better tools.
+**Mission:** Built for curiosity. Reduce the distance between curiosity and understanding.
 
-## The Problem
+This is not a vision project. **It is a longitudinal perception project.**
 
-Today's workflow:
+## The Interaction
+
+Not:
 
 ```
-I notice something
-    ↓
-Take a photo
-    ↓
-Open ChatGPT / Google Lens
-    ↓
-Upload
-    ↓
-Wait
-    ↓
-Understand
+Take photo → Upload → Ask AI → Wait → Learn
 ```
 
-There is unnecessary latency between curiosity and understanding.
-
-## The Goal
+But:
 
 ```
 Walking...
@@ -37,10 +27,12 @@ Observe
     ↓
 Understand
     ↓
+Lower phone
+    ↓
 Continue walking
 ```
 
-The interface is the gesture.
+The interface is the gesture. The camera is the home screen. No feeds, chats, or menus competing for attention.
 
 ## What We Are NOT Building
 
@@ -53,64 +45,100 @@ The interface is the gesture.
 
 Those products begin with AI. **We begin with human curiosity.**
 
-## Product Philosophy
+## Product Principles
 
-**Reality is the interface.**
+1. **Curiosity always begins with the human.** The AI never interrupts, never initiates. The user points the device only when curiosity strikes.
 
-The camera is a window into the real world. The UI should almost disappear. The user should feel like they're using a modern magnifying glass — picked up only when something catches their attention. When curiosity ends, the interface disappears.
-
-## Design Principles
-
-1. **Curiosity always begins with the human.** The AI never interrupts, never initiates, always waits.
-
-2. **Reality is the primary interface.** No menus, feeds, tabs, or home screen. The camera is the home screen.
+2. **Reality is the interface.** The screen should disappear. The world remains the focus. The app should feel like a modern magnifying glass, not another application.
 
 3. **Silence is the default.** If nothing meaningful should be said, say nothing.
 
-4. **Show one meaningful observation.** Never annotate everything. Never become visual noise.
+4. **One observation is enough.** Avoid clutter. Avoid object detection overlays. Prefer a single elegant observation anchored to reality. The UI should resemble a museum placard more than an AI dashboard.
 
 5. **Return attention back to reality.** Success is measured by how quickly the user lowers the phone and keeps looking at the world.
 
-## Interaction
+## The Biggest Realization
 
-```
-Notice
-    ↓
-Lift phone
-    ↓
-Hold Eye button
-    ↓
-Perception activates
-    ↓
-One meaningful observation appears
-    ↓
-Release
-    ↓
-Everything disappears
-```
+**Why wouldn't people just use Google Lens?**
 
-## The Difference
+Google Lens asks: **"What am I looking at?"**
 
-Google Lens answers: **"What is this?"**
+Curiosity asks: **"What has changed?"**
 
-We answer: **"What is worth noticing?"**
+That is our fundamental differentiator.
 
-That's a fundamentally different interaction.
+## The Four Layers
 
-## Long-Term Direction
+Current AI generally stops after recognition. Curiosity continues.
 
-The phone is only today's hardware. Eventually this interaction could live on dedicated AI hardware. The important innovation is not the camera — it is the interaction. The interaction survives regardless of hardware.
+| Stage | Question | Example |
+|-------|----------|---------|
+| **1. Recognition** | What is this? | *(Google Lens stops here)* |
+| **2. Observation** | What's interesting? | Three new flower buds have opened. |
+| **3. Continuity** | What has changed since last time? | The graft has grown noticeably since yesterday. |
+| **4. Anticipation** | What is likely to happen next? | Buds likely to open in 3–5 days. |
+
+**Recognition is the starting point, not the destination.**
+
+## Continuity > Recognition
+
+Google Lens is largely stateless. Every image is a fresh query.
+
+Curiosity should be **continuous**. Every observation is another page in an unfolding story. The app should not repeatedly introduce the same object — it should quietly turn the page.
+
+| Google Lens | Curiosity |
+|-------------|-----------|
+| Coffee tree. | Three new flowers since yesterday. |
+| | The graft has grown noticeably. |
+| | Soil moisture appears lower than last visit. |
+
+## Relationship Instead of Memory
+
+The goal is not simply to "remember." The goal is to build **familiarity**.
+
+A doctor doesn't begin every visit by saying *"You appear to be human."* They say *"Compared to last year..."*
+
+Our AI should behave similarly — optimizing for **change detection**, not repeated classification.
+
+## Placefulness
+
+Places have identity. Not GPS identity. **Human identity.**
+
+Through repeated interaction, the app develops familiarity with the user's world:
+
+- balcony coffee tree
+- hallway citrus tree
+- workshop bench
+
+These aren't invented labels. They become meaningful through relationship.
+
+## Tone
+
+Avoid sounding like an encyclopedia. Avoid sounding like ChatGPT. Avoid technical jargon.
+
+Sound like a knowledgeable friend standing beside the user.
+
+| Bad | Better |
+|-----|--------|
+| Plant health analysis indicates floral initiation. | Three new flower buds have opened. |
+
+## Design Philosophy
+
+**Technology should never become more interesting than the thing being observed.**
+
+The observation is the placard. Reality is the artwork.
 
 ## Learning the User
 
 We do **not** want packs or modes (Botanist Mode, Mechanic Mode, etc.).
 
-Instead, the system gradually learns the user's natural curiosity. Over time it notices patterns:
+Instead, the system gradually learns what its owner naturally investigates — and surfaces that lens without being asked.
 
-- Frequently investigates plants → botanical observations surface naturally first
-- Frequently investigates paintings, architecture, or electronics → those become the primary lens
+## Long-Term Vision
 
-The AI is not becoming an expert. It is learning what its owner naturally notices.
+We are not trying to build "AI with a camera." We are exploring a new human-computer interaction model.
+
+The phone is today's hardware. The interaction should survive future hardware. The important innovation is not the camera — it is the **relationship between curiosity and understanding**.
 
 ## Engineering Goal
 
@@ -132,4 +160,4 @@ If the AI is slightly less capable but the interaction feels as natural as lifti
 
 **Built for curiosity.**
 
-Or: **The shortest path from "Huh..." to "Ah."**
+**The shortest path from "Huh..." to "Ah."**

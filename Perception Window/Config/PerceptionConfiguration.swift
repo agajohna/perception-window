@@ -19,4 +19,10 @@ enum PerceptionConfiguration {
 
     static let observationFadeDuration: TimeInterval = 0.35
     static let resampleInterval: TimeInterval = 1.5
+
+    /// Same entity within this window continues the current inspection — no continuity comparison.
+    static let continuityRevisitInterval: TimeInterval = 120
+
+    /// Minimum confidence to link a retrieval hint to an existing entity.
+    static let subjectMatchThreshold: Float = 0.15
 }

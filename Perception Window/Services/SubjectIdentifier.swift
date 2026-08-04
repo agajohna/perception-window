@@ -1,5 +1,5 @@
 //
-//  DemoPerceptionService.swift
+//  SubjectIdentifier.swift
 //  Perception Window
 //
 
@@ -11,104 +11,84 @@ import Vision
 import UIKit
 #endif
 
-struct DemoPerceptionService {
-    private struct DemoSubject {
-        let observation: String
-        let detail: String?
-        let subject: String
+/// Lightweight attention pass — produces conservative retrieval hints, not identity.
+struct SubjectIdentifier {
+    private struct CatalogEntry {
+        let temporarySubjectKey: String
         let domain: CuriosityDomain
+        let firstVisitPrimary: String
+        let firstVisitDetail: String?
         let classificationKeywords: [String]
         let textKeywords: [String]
     }
 
-    private struct RankedMatch {
-        let subject: DemoSubject
-        let score: Float
-    }
-
-    private static let catalog: [DemoSubject] = [
-        DemoSubject(
-            observation: "Figure in meditation posture",
-            detail: nil,
-            subject: "statue",
+    private static let catalog: [CatalogEntry] = [
+        CatalogEntry(
+            temporarySubjectKey: "object_statue",
             domain: .objects,
-            classificationKeywords: [
-                "statue", "sculpture", "figurine", "idol", "deity", "buddha",
-                "religious", "artifact", "effigy", "monk"
-            ],
+            firstVisitPrimary: "Figure in meditation posture",
+            firstVisitDetail: nil,
+            classificationKeywords: ["statue", "sculpture", "figurine", "idol", "deity", "buddha", "religious", "artifact", "effigy", "monk"],
             textKeywords: ["buddha", "meditation"]
         ),
-        DemoSubject(
-            observation: "Zebra ZP505",
-            detail: "Thermal label printer.\nReady for 4×6 shipping labels.",
-            subject: "printer",
+        CatalogEntry(
+            temporarySubjectKey: "device_printer_zebra",
             domain: .electronics,
-            classificationKeywords: [
-                "printer", "printing", "label", "office", "equipment", "machine"
-            ],
+            firstVisitPrimary: "Zebra ZP505",
+            firstVisitDetail: "Thermal label printer.\nReady for 4×6 shipping labels.",
+            classificationKeywords: ["printer", "printing", "label", "office", "equipment", "machine"],
             textKeywords: ["zebra", "zp505", "zp 505", "thermal", "printer"]
         ),
-        DemoSubject(
-            observation: "Mac mini M4",
-            detail: "Compact desktop.\nSilent when idle.",
-            subject: "computer",
+        CatalogEntry(
+            temporarySubjectKey: "device_computer_macmini",
             domain: .electronics,
-            classificationKeywords: [
-                "computer", "desktop", "mac", "minicomputer", "electronics",
-                "server", "workstation", "personal computer", "pc"
-            ],
+            firstVisitPrimary: "Mac mini M4",
+            firstVisitDetail: "Compact desktop.\nSilent when idle.",
+            classificationKeywords: ["computer", "desktop", "mac", "minicomputer", "electronics", "server", "workstation", "personal computer", "pc"],
             textKeywords: ["mac mini", "macmini", "apple"]
         ),
-        DemoSubject(
-            observation: "New flower buds forming",
-            detail: "Likely to open in 4–7 days.\n\nFlowering appears uniform across the upper canopy.",
-            subject: "plant",
+        CatalogEntry(
+            temporarySubjectKey: "plant_coffea",
             domain: .plants,
-            classificationKeywords: [
-                "plant", "houseplant", "coffee", "shrub", "vegetation", "tree"
-            ],
+            firstVisitPrimary: "New flower buds forming",
+            firstVisitDetail: "Likely to open in 4–7 days.\n\nFlowering appears uniform across the upper canopy.",
+            classificationKeywords: ["plant", "houseplant", "coffee", "shrub", "vegetation", "tree"],
             textKeywords: ["coffee", "coffea"]
         ),
-        DemoSubject(
-            observation: "Light across the canvas",
-            detail: nil,
-            subject: "painting",
+        CatalogEntry(
+            temporarySubjectKey: "art_painting",
             domain: .art,
-            classificationKeywords: [
-                "painting", "art", "picture", "canvas", "frame", "poster"
-            ],
+            firstVisitPrimary: "Light across the canvas",
+            firstVisitDetail: nil,
+            classificationKeywords: ["painting", "art", "picture", "canvas", "frame", "poster"],
             textKeywords: ["painting", "canvas"]
         ),
-        DemoSubject(
-            observation: "Possible early chlorosis",
-            detail: "Older leaves affected first.\nCompare with neighboring leaves.",
-            subject: "leaf",
+        CatalogEntry(
+            temporarySubjectKey: "plant_leaf",
             domain: .plants,
-            classificationKeywords: [
-                "leaf", "foliage", "green", "plant", "herb"
-            ],
+            firstVisitPrimary: "Possible early chlorosis",
+            firstVisitDetail: "Older leaves affected first.\nCompare with neighboring leaves.",
+            classificationKeywords: ["leaf", "foliage", "green", "plant", "herb"],
             textKeywords: ["leaf"]
         ),
-        DemoSubject(
-            observation: "New flower buds forming",
-            detail: "Likely to open in 4–7 days.",
-            subject: "flower",
+        CatalogEntry(
+            temporarySubjectKey: "plant_flower",
             domain: .plants,
-            classificationKeywords: [
-                "flower", "bloom", "blossom", "petal", "floral"
-            ],
+            firstVisitPrimary: "New flower buds forming",
+            firstVisitDetail: "Likely to open in 4–7 days.",
+            classificationKeywords: ["flower", "bloom", "blossom", "petal", "floral"],
             textKeywords: ["flower", "bloom", "blossom"]
         )
     ]
 
-    func perceive(jpeg: Data, profile: CuriosityProfile) async -> AnalysisResult {
+    func identify(jpeg: Data, profile: CuriosityProfile) async -> SubjectResolution? {
         #if os(iOS)
         return await Task.detached(priority: .userInitiated) {
             guard
                 let image = UIImage(data: jpeg),
                 let cgImage = image.cgImage
             else {
-                return .silent(.noSubjectIdentified, rawResponse: "")
+                return nil
             }
 
             let orientation = CGImagePropertyOrientation(image.imageOrientation)
@@ -118,62 +98,65 @@ struct DemoPerceptionService {
             let recognizedText = Self.runTextRecognition(handler: handler)
             let anchor = Self.runSaliencyAnchor(handler: handler) ?? CGPoint(x: 0.5, y: 0.5)
 
-            guard let match = Self.bestAttention(
+            guard let match = Self.bestMatch(
                 catalog: Self.catalog,
                 profile: profile,
                 classifications: classifications,
                 recognizedText: recognizedText
             ) else {
-                return .silent(.noSubjectIdentified, rawResponse: "")
+                return nil
             }
 
-            let observation = PerceptionObservation(
-                primary: match.subject.observation,
-                detail: match.subject.detail,
-                temporarySubjectKey: match.subject.subject,
-                domain: match.subject.domain,
-                anchor: anchor
-            )
+            guard match.score >= PerceptionConfiguration.subjectMatchThreshold else {
+                return nil
+            }
 
-            return AnalysisResult(
-                outcome: .observation(observation),
-                rawResponse: "demo:\(match.subject.subject)"
+            return SubjectResolution(
+                temporarySubjectKey: match.entry.temporarySubjectKey,
+                domain: match.entry.domain,
+                anchor: anchor,
+                matchConfidence: match.score,
+                firstVisitPrimary: match.entry.firstVisitPrimary,
+                firstVisitDetail: match.entry.firstVisitDetail
             )
         }.value
         #else
-        return .silent(.noSubjectIdentified, rawResponse: "")
+        return nil
         #endif
     }
 
     #if os(iOS)
-    /// One attention at a time — ranked by signal strength and learned curiosity.
-    private static func bestAttention(
-        catalog: [DemoSubject],
+    private static func bestMatch(
+        catalog: [CatalogEntry],
         profile: CuriosityProfile,
-        classifications: [(identifier: String, confidence: Float)],
+        classifications: [(String, Float)],
         recognizedText: [String]
-    ) -> RankedMatch? {
+    ) -> (entry: CatalogEntry, score: Float)? {
         let normalizedText = recognizedText.joined(separator: " ").lowercased()
-        var matches: [RankedMatch] = []
+        var best: (entry: CatalogEntry, score: Float)?
 
-        for subject in catalog {
-            for keyword in subject.textKeywords where normalizedText.contains(keyword) {
-                let weighted = Float(profile.weight(for: subject.domain)) * 0.95
-                matches.append(RankedMatch(subject: subject, score: weighted))
+        for entry in catalog {
+            for keyword in entry.textKeywords where normalizedText.contains(keyword) {
+                let score = Float(profile.weight(for: entry.domain)) * 0.95
+                if best == nil || score > best!.score {
+                    best = (entry, score)
+                }
             }
         }
 
         for (identifier, confidence) in classifications where confidence > 0.05 {
             let normalized = identifier.lowercased().replacingOccurrences(of: "_", with: " ")
-            for subject in catalog {
-                if subject.classificationKeywords.contains(where: { normalized.contains($0) }) {
-                    let weighted = confidence * Float(profile.weight(for: subject.domain))
-                    matches.append(RankedMatch(subject: subject, score: weighted))
+            for entry in catalog {
+                if entry.classificationKeywords.contains(where: { normalized.contains($0) }) {
+                    let score = confidence * Float(profile.weight(for: entry.domain))
+                    if best == nil || score > best!.score {
+                        best = (entry, score)
+                    }
                 }
             }
         }
 
-        return matches.max(by: { $0.score < $1.score })
+        return best
     }
 
     private static func runClassifications(handler: VNImageRequestHandler) -> [(String, Float)] {
@@ -207,7 +190,6 @@ struct DemoPerceptionService {
             else {
                 return
             }
-
             anchor = VisionGeometry.anchor(fromVisionBounds: salientObject.boundingBox)
         }
         try? handler.perform([request])

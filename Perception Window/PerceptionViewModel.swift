@@ -8,6 +8,10 @@ import Foundation
 import Observation
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#endif
+
 @Observable
 final class PerceptionViewModel {
     private(set) var isPerceiving = false
@@ -15,7 +19,9 @@ final class PerceptionViewModel {
     private(set) var displayedObservation: PerceptionObservation?
     private(set) var observationOpacity: Double = 0
 
-    private let demoService = DemoPerceptionService()
+    private let subjectIdentifier = SubjectIdentifier()
+    private let entityRegistry = EntityRegistry()
+    private let continuityService = ContinuityService()
     private let analysisService = AnalysisService()
     private let observationStore = ObservationStore()
 
@@ -26,6 +32,10 @@ final class PerceptionViewModel {
     private var isAnalysisInFlight = false
     private var pendingObservation: PerceptionObservation?
     private var focusIsComplete = false
+
+    /// Last completed inspection per entity — drives session vs revisit behavior.
+    private var lastInspectionByEntity: [UUID: Date] = [:]
+    private var currentEntityID: UUID?
 
     private let frameRelay = FrameRelay()
 
@@ -48,12 +58,20 @@ final class PerceptionViewModel {
         displayedObservation = nil
         observationOpacity = 0
         pendingObservation = nil
+        currentEntityID = nil
 
         startFocusFill()
         startSamplingLoop()
     }
 
     func end() {
+        if let entityID = currentEntityID {
+            lastInspectionByEntity[entityID] = Date()
+            Task {
+                await entityRegistry.recordVisit(for: entityID)
+            }
+        }
+
         isPerceiving = false
         samplingTask?.cancel()
         focusTask?.cancel()
@@ -61,6 +79,7 @@ final class PerceptionViewModel {
         isAnalysisInFlight = false
         pendingObservation = nil
         focusIsComplete = false
+        currentEntityID = nil
 
         Task { @MainActor in
             withAnimation(.easeOut(duration: 0.25)) {
@@ -125,27 +144,113 @@ final class PerceptionViewModel {
         isAnalysisInFlight = true
         defer { isAnalysisInFlight = false }
 
+        let profile = PerceptionConfiguration.curiosityProfile
+        let cameraMetadata = Self.cameraMetadata(for: jpeg)
         let result: AnalysisResult
-        if PerceptionConfiguration.useDemoPerception {
-            result = await demoService.perceive(
-                jpeg: jpeg,
-                profile: PerceptionConfiguration.curiosityProfile
+        var identity: SubjectIdentity?
+        var comparisonStrategy: ComparisonStrategy?
+
+        if let resolution = await subjectIdentifier.identify(jpeg: jpeg, profile: profile) {
+            let entity = await entityRegistry.resolve(
+                temporarySubjectKey: resolution.temporarySubjectKey,
+                matchConfidence: resolution.matchConfidence
             )
+            identity = SubjectIdentity(resolution: resolution, entity: entity)
+            currentEntityID = entity.id
+
+            let isSameSession = Self.isSameSession(
+                entityID: entity.id,
+                lastInspectionByEntity: lastInspectionByEntity
+            )
+            let hasBaseline = await observationStore.hasBaseline(forEntity: entity.id)
+            let comparison = await observationStore.comparisonTarget(
+                forEntity: entity.id,
+                revisitInterval: PerceptionConfiguration.continuityRevisitInterval
+            )
+            comparisonStrategy = comparison?.strategy
+
+            var comparisonJPEG: Data?
+            if let comparison {
+                comparisonJPEG = await observationStore.frameJPEG(for: comparison.record)
+            }
+
+            result = await continuityService.perceive(
+                jpeg: jpeg,
+                identity: identity!,
+                comparison: comparison,
+                comparisonJPEG: comparisonJPEG,
+                hasBaseline: hasBaseline,
+                isSameSession: isSameSession,
+                useDemoFirstVisit: PerceptionConfiguration.useDemoPerception
+            )
+        } else if PerceptionConfiguration.useDemoPerception {
+            result = .silent(.noSubjectIdentified, rawResponse: "identify:none")
         } else {
             do {
                 result = try await analysisService.analyze(jpeg: jpeg)
             } catch {
-                return
+                result = .silent(.modelFailure, rawResponse: "analyze:\(error)")
             }
         }
 
         guard isPerceiving else { return }
 
-        if !PerceptionConfiguration.useDemoPerception {
-            _ = try? await observationStore.save(frameJPEG: jpeg, result: result)
-        }
+        await persistIfNeeded(
+            jpeg: jpeg,
+            identity: identity,
+            result: result,
+            cameraMetadata: cameraMetadata,
+            comparisonStrategy: comparisonStrategy
+        )
 
         apply(result)
+    }
+
+    private func persistIfNeeded(
+        jpeg: Data,
+        identity: SubjectIdentity?,
+        result: AnalysisResult,
+        cameraMetadata: CameraCaptureMetadata?,
+        comparisonStrategy: ComparisonStrategy?
+    ) async {
+        switch result.outcome {
+        case .observation:
+            if let entityID = identity?.persistentEntityID {
+                _ = try? await observationStore.save(
+                    frameJPEG: jpeg,
+                    entityID: entityID,
+                    identity: identity,
+                    result: result,
+                    cameraMetadata: cameraMetadata,
+                    comparisonStrategy: comparisonStrategy
+                )
+            }
+        case .silent(let reason):
+            guard reason != .sameSessionContinuation else { return }
+
+            if result.isBaseline, let entityID = identity?.persistentEntityID {
+                _ = try? await observationStore.save(
+                    frameJPEG: jpeg,
+                    entityID: entityID,
+                    identity: identity,
+                    result: result,
+                    cameraMetadata: cameraMetadata,
+                    comparisonStrategy: comparisonStrategy
+                )
+                return
+            }
+
+            if reason == .noMeaningfulChange, let entityID = identity?.persistentEntityID {
+                _ = try? await observationStore.save(
+                    frameJPEG: jpeg,
+                    entityID: entityID,
+                    identity: identity,
+                    result: result,
+                    cameraMetadata: cameraMetadata,
+                    comparisonStrategy: comparisonStrategy
+                )
+            }
+        }
     }
 
     private func apply(_ result: AnalysisResult) {
@@ -159,9 +264,27 @@ final class PerceptionViewModel {
 
             pendingObservation = observation
             tryRevealPendingObservation()
-        case .nothingVisible:
+        case .silent:
             break
         }
+    }
+
+    private static func isSameSession(entityID: UUID, lastInspectionByEntity: [UUID: Date]) -> Bool {
+        guard let last = lastInspectionByEntity[entityID] else { return false }
+        return Date().timeIntervalSince(last) < PerceptionConfiguration.continuityRevisitInterval
+    }
+
+    private static func cameraMetadata(for jpeg: Data) -> CameraCaptureMetadata {
+        #if os(iOS)
+        if let image = UIImage(data: jpeg) {
+            return CameraCaptureMetadata(
+                imageWidth: Int(image.size.width * image.scale),
+                imageHeight: Int(image.size.height * image.scale),
+                jpegByteCount: jpeg.count
+            )
+        }
+        #endif
+        return CameraCaptureMetadata(jpegByteCount: jpeg.count)
     }
 
     private func tryRevealPendingObservation() {
