@@ -10,12 +10,14 @@ import SwiftUI
 
 struct CameraPreviewView: UIViewRepresentable {
     let session: AVCaptureSession
+    var perceptualTransform: CGAffineTransform = .identity
 
     func makeUIView(context: Context) -> CameraPreviewUIView {
         let view = CameraPreviewUIView()
         view.backgroundColor = .black
         view.previewLayer.session = session
         view.previewLayer.videoGravity = PerceptionConfiguration.previewVideoGravity
+        view.perceptualTransform = perceptualTransform
         return view
     }
 
@@ -24,10 +26,18 @@ struct CameraPreviewView: UIViewRepresentable {
             uiView.previewLayer.session = session
         }
         uiView.previewLayer.videoGravity = PerceptionConfiguration.previewVideoGravity
+        uiView.perceptualTransform = perceptualTransform
     }
 }
 
 final class CameraPreviewUIView: UIView {
+    var perceptualTransform: CGAffineTransform = .identity {
+        didSet {
+            guard perceptualTransform != oldValue else { return }
+            transform = perceptualTransform
+        }
+    }
+
     override class var layerClass: AnyClass {
         AVCaptureVideoPreviewLayer.self
     }

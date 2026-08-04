@@ -40,6 +40,8 @@ final class PerceptionViewModel {
     private var lastInspectionByEntity: [UUID: Date] = [:]
     private var currentEntityID: UUID?
 
+    private weak var transparentWindowSession: TransparentWindowSession?
+
     private let frameRelay = FrameRelay()
 
     func attach(to camera: CameraService) {
@@ -50,6 +52,19 @@ final class PerceptionViewModel {
         }
 
         camera.onFrame = { [frameRelay] sampleBuffer in
+            frameRelay.process(sampleBuffer)
+        }
+    }
+
+    func attach(to transparentWindow: TransparentWindowSession) {
+        transparentWindowSession = transparentWindow
+        frameRelay.onJPEG = { [weak self] jpeg in
+            Task { @MainActor in
+                self?.accumulateFrame(jpeg)
+            }
+        }
+
+        transparentWindow.attachFrameRelay { [frameRelay] sampleBuffer in
             frameRelay.process(sampleBuffer)
         }
     }
@@ -65,6 +80,7 @@ final class PerceptionViewModel {
         currentEntityID = nil
         frameSelector.reset()
         deactivateLens()
+        transparentWindowSession?.deliversAnalysisFrames = true
         if let recent = frameRelay.latestJPEG {
             frameSelector.consider(recent)
         }
@@ -77,6 +93,7 @@ final class PerceptionViewModel {
         let ringReady = focusIsComplete || focusProgress >= 0.2
 
         deactivateLens()
+        transparentWindowSession?.deliversAnalysisFrames = false
         isPerceiving = false
         focusTask?.cancel()
         transitionTask?.cancel()
@@ -122,6 +139,7 @@ final class PerceptionViewModel {
     }
 
     private func activateLens(at anchor: CGPoint) {
+        guard PerceptionConfiguration.lensMagnificationEnabled else { return }
         lensAnchor = anchor
         isLensActive = true
     }

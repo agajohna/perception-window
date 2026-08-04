@@ -8,12 +8,17 @@ import SwiftUI
 @main
 struct Perception_WindowApp: App {
     @State private var camera = CameraService()
+    @State private var transparentWindow = TransparentWindowSession()
 
     var body: some Scene {
         WindowGroup {
-            ContentView(camera: camera)
+            ContentView(camera: camera, transparentWindow: transparentWindow)
                 .task(priority: .userInitiated) {
-                    await camera.prepare()
+                    if PerceptionConfiguration.usesARKitSession {
+                        await transparentWindow.prepare()
+                    } else {
+                        await camera.prepare()
+                    }
                 }
         }
     }

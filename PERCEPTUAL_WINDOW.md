@@ -1,68 +1,91 @@
-# Curiosity — Perceptual Window
-
-## The issue
-
-When the phone is held between the user's eyes and an object, the object shown on-screen is not the same apparent size as the real object around the phone's edges. That breaks the illusion of transparency.
-
-We do not want an expensive live calibration system yet. For now, treat this like a fixed perceptual handicap: a **device-specific baseline zoom** that corrects the ordinary viewing case.
+# Curiosity — Glass View (Sensor Fusion)
 
 ## Goal
 
-Make the phone feel less like a camera and more like a piece of transparent glass.
+Make the display behave like a **physically transparent pane** between the user's eye and the world.
 
-## Prototype approach
+**Key principle:** The camera moves with the phone. The viewpoint stays with the person.
 
-Assume a normal inspection posture:
+Baseline device: **iPhone 12 mini** (no LiDAR, TrueDepth front, wide + ultra-wide rear).
 
-- Phone roughly 12–16 inches from the user's eyes
-- Subject roughly 2–5 feet beyond the phone
-- Portrait orientation
-- User looking near the center of the screen
+## Architecture
 
-Test fixed zoom values: `1.00`, `1.10`, `1.18`, `1.25`, `1.30`
+All sensors fuse into a single `PerceptionState` consumed by the Metal renderer:
 
-Choose the value that makes the preview feel most geometrically faithful during normal use.
+```
+Front TrueDepth     → viewer/eye pose (on-device only, Glass View active)
+Rear wide camera    → primary texture (ARKit)
+Rear ultra-wide     → overscan margin (Stage 1+: wide only; dual-texture next)
+ARKit               → 6DOF device pose, feature points, planes, intrinsics
+IMU                 → high-frequency orientation prediction between frames
+Feature points / parallax / planes → dynamic dominant scene depth
 
-**No user-facing calibration screen. No slider. No front-camera eye tracking. No continuous distance estimation.**
+PerceptionState → Metal viewpoint-correct reprojection → full-screen Glass View
+```
 
-## Implementation
+## Rendering rules
 
-Hidden configuration in `PerceptionConfiguration`:
+1. **Warp-only after init** — never blend unwarped ARSCNView with warped mesh
+2. **Graceful fallback** — confidence drops → simplified reprojection → passthrough
+3. **Privacy** — front camera runs only during Glass View; no storage, no upload, no identification
 
-- `perceptualBaselineZoom` — physical camera zoom (default `1.18`)
-- Physical camera 1.18× = Curiosity perceptual 1.00× (neutral window state)
+## Stages
 
-## Two visual states
+### Stage 1 — Viewer-aware flat plane (current)
 
-### Window state
+- TrueDepth coarse eye pose (~12 Hz)
+- ARKit device pose + IMU prediction
+- Dynamic dominant plane depth (features + parallax + planes)
+- Wide rear texture via ARKit
+- Metal reprojection
 
-Default camera preview. Uses `perceptualBaselineZoom`. No global magnification animation. Camera should feel stable and transparent.
+### Stage 2 — Motion-refined depth
 
-### Lens state
+- Continuous parallax depth from natural phone motion (enabled via `planeDepthSelfTuningEnabled`)
 
-When the user holds the eye button and the system has selected a subject:
+### Stage 3 — Multi-region depth
 
-- Keep the overall scene at the perceptual baseline
-- Gently magnify only the selected subject region (`lensMagnification`, ~1.15×–1.35× relative to window state)
-- Animate smoothly; release returns to normal scale
+- Foreground/background planes from feature clusters or monocular depth
 
-**At rest, it is a window. Under curiosity, it becomes a lens.**
+### Stage 4 — Dense depth
 
-## Avoid
+- LiDAR or Core ML monocular depth where practical
 
-- Zooming the entire camera feed when the eye activates
-- Sudden digital zoom jumps
-- Visible calibration UI
-- Running front and rear cameras simultaneously
-- Continuous eye-distance calculations
-- LiDAR dependency for this stage
+### Stage 5 — Actual viewer position
 
-## Testing method
+- Refined gaze from front sensing (beyond coarse TrueDepth landmarks)
 
-Use an object that crosses the phone's edge (e.g. Zebra printer). Hold in normal inspection position. Compare the portion visible outside the phone with the same object inside the screen. Choose the fixed zoom where apparent sizes align most naturally. Test on the actual target device.
+## Fallback modes
+
+| Mode | When |
+|------|------|
+| `fullReprojection` | Viewer pose + tracking + depth confidence high |
+| `simplifiedReprojection` | Tracking OK, viewer pose weak — fixed eye distance, dynamic depth |
+| `passthrough` | Tracking lost, thermal critical, or repeated warp failures |
+
+## Tuning (legacy A1 fallback when `glassViewSensorFusionEnabled = false`)
+
+| Parameter | When to tune |
+|-----------|--------------|
+| `virtualEyeDistanceMeters` | Phone still — seam scale |
+| `scenePlaneDepthMeters` | Phone slides sideways — parallax |
+
+Double-tap re-locks fusion state.
+
+## Debug
+
+Set `glassViewDebugMetricsEnabled = true` to overlay:
+
+- viewer pose confidence, eye distance, scene depth source
+- active rear sources, reprojection error estimate
+- fallback mode, thermal state, render latency
+
+## Acceptance test
+
+Rigid object (printer, door frame, monitor edge). Hold phone between one eye and object. Move phone slowly; then move head slightly with phone steady.
+
+Success: object continuity across the physical screen edge; scene feels less like a moving camera feed; head movement updates viewpoint; drift reduced vs fixed-offset version.
 
 ## Product principle
 
-Correct the ordinary case first. Calculate the exceptional case later.
-
-This is not yet a full optical model. It is a practical perceptual correction that should make the app disappear more convincingly today.
+Prove the experience on current hardware. If sensor fusion cannot make the screen feel meaningfully less like a camera, fall back to normal preview without blocking continuity or core app features.
