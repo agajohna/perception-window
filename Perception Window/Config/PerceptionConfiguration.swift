@@ -3,6 +3,7 @@
 //  Perception Window
 //
 
+import AVFoundation
 import Foundation
 
 #if canImport(CoreGraphics)
@@ -48,12 +49,13 @@ enum PerceptionConfiguration {
 
     // MARK: - Perceptual window
 
-    /// Physical camera zoom that reads as neutral 1.0× — device-specific perceptual handicap.
-    /// Test candidates: 1.00, 1.10, 1.18, 1.25, 1.30
-    static let perceptualBaselineZoom: CGFloat = 1.0
+    /// Physical camera zoom that reads as neutral 1.0× — tune on your device with the printer edge test.
+    /// Candidates: 1.00, 1.10, 1.18, 1.25, 1.30
+    static let perceptualBaselineZoom: CGFloat = 1.18
 
-    /// Conceptual neutral after baseline is applied — not applied to the device again.
-    static let windowScale: CGFloat = 1.0
+    /// `resizeAspectFill` fills the screen (glass window). Tune zoom if edge alignment is off.
+    /// Use `.resizeAspect` only if you prefer geometric letterboxing over full-bleed.
+    static let previewVideoGravity: AVLayerVideoGravity = .resizeAspectFill
 
     /// Local subject magnification during lens state, relative to the window baseline.
     static let lensMagnification: CGFloat = 1.25

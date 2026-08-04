@@ -37,6 +37,10 @@ final class CameraService: NSObject {
                     session.startRunning()
                 }
                 applyPerceptualBaselineZoomIfNeeded()
+                // Retry once capture hardware is fully warm — avoids silent zoom failure.
+                sessionQueue.asyncAfter(deadline: .now() + 0.35) { [self] in
+                    applyPerceptualBaselineZoomIfNeeded()
+                }
                 Task { @MainActor in
                     self.isRunning = self.session.isRunning
                     continuation.resume()

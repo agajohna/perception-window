@@ -13,8 +13,9 @@ struct CameraPreviewView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> CameraPreviewUIView {
         let view = CameraPreviewUIView()
+        view.backgroundColor = .black
         view.previewLayer.session = session
-        view.previewLayer.videoGravity = .resizeAspectFill
+        view.previewLayer.videoGravity = PerceptionConfiguration.previewVideoGravity
         return view
     }
 
@@ -22,6 +23,7 @@ struct CameraPreviewView: UIViewRepresentable {
         if uiView.previewLayer.session !== session {
             uiView.previewLayer.session = session
         }
+        uiView.previewLayer.videoGravity = PerceptionConfiguration.previewVideoGravity
     }
 }
 
