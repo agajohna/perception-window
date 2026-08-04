@@ -19,7 +19,7 @@ struct ContinuityService {
         isSameSession: Bool,
         useDemoFirstVisit: Bool
     ) async -> AnalysisResult {
-        if isSameSession {
+        if isSameSession && !useDemoFirstVisit {
             return .silent(.sameSessionContinuation, rawResponse: "session:continuation")
         }
 
