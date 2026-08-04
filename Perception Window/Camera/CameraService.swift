@@ -25,36 +25,34 @@ final class CameraService: NSObject {
     nonisolated(unsafe) private var captureDevice: AVCaptureDevice?
     nonisolated(unsafe) var onFrame: (@Sendable (CMSampleBuffer) -> Void)?
 
-    override init() {
-        super.init()
-        sessionQueue.async { [self] in
-            configureIfNeeded()
-        }
-    }
-
     func prepare() async {
         let granted = await requestAccess()
         authorizationState = granted ? .authorized : .denied
         guard granted else { return }
 
-        await withCheckedContinuation { continuation in
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             sessionQueue.async { [self] in
                 configureIfNeeded()
-                continuation.resume()
+                if !session.isRunning {
+                    session.startRunning()
+                }
+                applyPerceptualBaselineZoomIfNeeded()
+                Task { @MainActor in
+                    self.isRunning = self.session.isRunning
+                    continuation.resume()
+                }
             }
         }
-
-        start()
     }
 
     nonisolated func start() {
         sessionQueue.async { [self] in
             configureIfNeeded()
-            applyPerceptualBaselineZoomIfNeeded()
             guard !session.isRunning else { return }
             session.startRunning()
+            applyPerceptualBaselineZoomIfNeeded()
             Task { @MainActor in
-                isRunning = true
+                self.isRunning = self.session.isRunning
             }
         }
     }
@@ -64,7 +62,7 @@ final class CameraService: NSObject {
             guard session.isRunning else { return }
             session.stopRunning()
             Task { @MainActor in
-                isRunning = false
+                self.isRunning = false
             }
         }
     }
@@ -82,10 +80,11 @@ final class CameraService: NSObject {
 
     nonisolated private func configureIfNeeded() {
         guard !isConfigured else { return }
+
         session.beginConfiguration()
         defer { session.commitConfiguration() }
 
-        session.sessionPreset = .high
+        session.sessionPreset = .hd1920x1080
 
         guard
             let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
@@ -110,9 +109,9 @@ final class CameraService: NSObject {
         isConfigured = true
     }
 
-    /// Physical zoom applied after session configuration — Curiosity perceptual 1.0× window state.
     nonisolated private func applyPerceptualBaselineZoomIfNeeded() {
-        guard let device = captureDevice else { return }
+        guard session.isRunning, let device = captureDevice else { return }
+
         let target = PerceptionConfiguration.perceptualBaselineZoom
         guard target > 1.0 else { return }
 
@@ -125,7 +124,7 @@ final class CameraService: NSObject {
             )
             device.videoZoomFactor = clamped
         } catch {
-            // Baseline zoom is best-effort — preview still works at 1.0×.
+            // Best-effort — preview works at 1.0× if zoom fails.
         }
     }
 }

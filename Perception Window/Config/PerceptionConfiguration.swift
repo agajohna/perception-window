@@ -50,7 +50,7 @@ enum PerceptionConfiguration {
 
     /// Physical camera zoom that reads as neutral 1.0× — device-specific perceptual handicap.
     /// Test candidates: 1.00, 1.10, 1.18, 1.25, 1.30
-    static let perceptualBaselineZoom: CGFloat = 1.18
+    static let perceptualBaselineZoom: CGFloat = 1.0
 
     /// Conceptual neutral after baseline is applied — not applied to the device again.
     static let windowScale: CGFloat = 1.0

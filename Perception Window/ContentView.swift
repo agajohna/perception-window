@@ -12,13 +12,9 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             #if os(iOS)
-            if camera.authorizationState == .authorized || camera.isRunning {
-                CameraPreviewView(
-                    session: camera.session,
-                    isLensActive: perception.isLensActive,
-                    lensAnchor: perception.lensAnchor
-                )
-                .ignoresSafeArea()
+            if camera.authorizationState == .authorized && camera.isRunning {
+                CameraPreviewView(session: camera.session)
+                    .ignoresSafeArea()
             } else if camera.authorizationState == .denied {
                 Color.black
                     .ignoresSafeArea()
