@@ -1,0 +1,10 @@
+# API keys — copy Secrets.example.plist to Secrets.plist
+Perception Window/Secrets.plist
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+
+# Build artifacts
+DerivedData/
+build/
