@@ -88,6 +88,10 @@ final class TransparentWindowSession: NSObject {
         return perceptionState
     }
 
+    func liveViewerPose() -> ViewerPoseEstimate {
+        perceptionFusion.liveViewerPose()
+    }
+
     func consumeLatestRenderPacket() -> RenderFramePacket? {
         renderPacketLock.lock()
         defer { renderPacketLock.unlock() }

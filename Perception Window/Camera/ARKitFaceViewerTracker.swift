@@ -18,6 +18,9 @@ final class ARKitFaceViewerTracker {
     private var lastFrameTime: TimeInterval = 0
     private var framesReceived: UInt64 = 0
     private var facesDetected: UInt64 = 0
+    private var smoothedLateral = SIMD2<Float>(0, 0)
+    private var smoothedEyeDistance = PerceptionConfiguration.virtualEyeDistanceMeters
+    private var smoothingPrimed = false
 
     static var isSupported: Bool {
         PerceptionConfiguration.glassViewViewerPoseEnabled
@@ -31,6 +34,9 @@ final class ARKitFaceViewerTracker {
         lastFrameTime = 0
         framesReceived = 0
         facesDetected = 0
+        smoothedLateral = .zero
+        smoothedEyeDistance = PerceptionConfiguration.virtualEyeDistanceMeters
+        smoothingPrimed = false
         lock.unlock()
     }
 
@@ -53,14 +59,24 @@ final class ARKitFaceViewerTracker {
         let profile = DeviceOpticalProfile.current
         let eyeDistance = min(max(abs(eyeLocal.z), 0.30), 0.65)
         let lateral = SIMD2(eyeLocal.x, eyeLocal.y)
+        let alpha = PerceptionConfiguration.viewerPoseSmoothingAlpha
+        if !smoothingPrimed {
+            smoothedLateral = lateral
+            smoothedEyeDistance = eyeDistance
+            smoothingPrimed = true
+        } else {
+            smoothedLateral += (lateral - smoothedLateral) * alpha
+            smoothedEyeDistance += (eyeDistance - smoothedEyeDistance) * alpha * 0.5
+        }
+
         let gain = PerceptionConfiguration.viewerPoseLateralGain
-        let adjustedEye = profile.virtualEyeOffsetFromCamera(eyeDistanceMeters: eyeDistance)
-            + SIMD3(lateral.x * gain, lateral.y * gain, 0)
+        let adjustedEye = profile.virtualEyeOffsetFromCamera(eyeDistanceMeters: smoothedEyeDistance)
+            + SIMD3(smoothedLateral.x * gain, smoothedLateral.y * gain, 0)
 
         let estimate = ViewerPoseEstimate(
             eyeMidpointDevice: adjustedEye,
-            eyeToScreenDistanceMeters: eyeDistance,
-            lateralOffsetMeters: lateral,
+            eyeToScreenDistanceMeters: smoothedEyeDistance,
+            lateralOffsetMeters: smoothedLateral,
             confidence: faceAnchor.isTracked ? 0.95 : 0.6,
             isValid: true,
             timestamp: now

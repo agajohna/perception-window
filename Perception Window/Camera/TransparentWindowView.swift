@@ -102,7 +102,8 @@ struct TransparentWindowView: UIViewRepresentable {
                 lockedCameraPosition: session.lockedCameraWorldPosition,
                 lockedViewerLateral: session.lockedViewerLateral,
                 warpLockBaselineDeltas: session.warpLockBaselineDeltas,
-                perceptionState: session.currentPerceptionState()
+                perceptionState: session.currentPerceptionState(),
+                liveViewerPose: session.liveViewerPose()
             )
 
             guard let renderer else {

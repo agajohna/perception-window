@@ -138,7 +138,7 @@ enum PerceptionConfiguration {
     /// Exponential smoothing for fused scene depth (0 = frozen, 1 = raw).
     static let sceneDepthFilterAlpha: Float = 0.12
 
-    static let fusionProcessingRateHz: Double = 15
+    static let fusionProcessingRateHz: Double = 30
 
     /// Force direct camera UV mapping — off now that Metal feed is stable.
     static let glassViewForcePassthroughPreview = false
@@ -149,7 +149,7 @@ enum PerceptionConfiguration {
     static let viewerPoseUpdateRateHz: Double = 12
 
     /// Amplifies head-relative lateral offset for visible parallax at screen edges.
-    static let viewerPoseLateralGain: Float = 2.0
+    static let viewerPoseLateralGain: Float = 1.0
 
     static let glassViewFullReprojectionThreshold: Float = 0.45
     static let glassViewSimplifiedReprojectionThreshold: Float = 0.25
@@ -160,13 +160,31 @@ enum PerceptionConfiguration {
     static let glassViewWarpExaggerationGain: Float = 1.0
 
     /// Scales lateral phone-motion parallax in WARP mode.
-    static let glassViewMotionParallaxStrength: Float = 3.0
+    static let glassViewMotionParallaxStrength: Float = 1.8
 
     /// Scales head-motion parallax from TrueDepth / face landmarks.
-    static let glassViewHeadParallaxStrength: Float = 2.5
+    static let glassViewHeadParallaxStrength: Float = 1.4
 
     /// Soft ceiling on parallax UV shift — prevents edge streaking past ~20 cm motion.
     static let glassViewMaxParallaxUVOffset: Float = 0.12
+
+    /// Temporal low-pass on parallax + window scale — reduces VIO / face jitter.
+    static let glassViewParallaxSmoothingEnabled = true
+
+    /// EMA alpha when motion is below the jitter threshold (hold still).
+    static let glassViewParallaxSmoothingAlphaStill: Float = 0.10
+
+    /// EMA alpha when the user is deliberately moving head or phone.
+    static let glassViewParallaxSmoothingAlphaMoving: Float = 0.38
+
+    /// UV delta below this is treated as sensor noise and filtered heavily.
+    static let glassViewParallaxJitterThresholdUV: Float = 0.0018
+
+    /// EMA alpha for window magnification (separate from parallax).
+    static let glassViewWindowScaleSmoothingAlpha: Float = 0.12
+
+    /// EMA on TrueDepth lateral offset before parallax (0 = frozen, 1 = raw).
+    static let viewerPoseSmoothingAlpha: Float = 0.22
 
     /// Debug seam — off now that Metal feed and warp path are verified.
     static let glassViewDebugForcedSplitOffset = false

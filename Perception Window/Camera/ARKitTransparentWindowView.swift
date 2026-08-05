@@ -109,7 +109,8 @@ struct ARKitTransparentWindowView: UIViewRepresentable {
                 lockedCameraPosition: session.lockedCameraWorldPosition,
                 lockedViewerLateral: session.lockedViewerLateral,
                 warpLockBaselineDeltas: session.warpLockBaselineDeltas,
-                perceptionState: session.currentPerceptionState()
+                perceptionState: session.currentPerceptionState(),
+                liveViewerPose: session.liveViewerPose()
             )
 
             let drawResult = renderer.draw(context: context, in: view)

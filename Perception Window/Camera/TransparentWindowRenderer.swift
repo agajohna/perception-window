@@ -21,6 +21,8 @@ struct TransparentWindowDrawContext {
     let lockedViewerLateral: SIMD2<Float>?
     let warpLockBaselineDeltas: [SIMD2<Float>]?
     let perceptionState: PerceptionState?
+    /// Sampled every render frame — avoids 15 Hz fusion stair-steps on head parallax.
+    let liveViewerPose: ViewerPoseEstimate?
 }
 
 final class TransparentWindowRenderer: NSObject {
@@ -55,6 +57,8 @@ final class TransparentWindowRenderer: NSObject {
     private let gridSize: Int
     private let lock = NSLock()
     private var sceneReference: VirtualEyeGeometry.SceneReference?
+    private var parallaxSmoother = GlassViewParallaxSmoother()
+    private var lastLockPosition: SIMD3<Float>?
 
     init?(gridSize: Int = PerceptionConfiguration.transparentWindowGridSize) {
         guard
@@ -107,6 +111,13 @@ final class TransparentWindowRenderer: NSObject {
     func setSceneReference(_ reference: VirtualEyeGeometry.SceneReference?) {
         lock.lock()
         sceneReference = reference
+        lock.unlock()
+    }
+
+    func resetParallaxSmoothing() {
+        lock.lock()
+        parallaxSmoother.reset()
+        lastLockPosition = nil
         lock.unlock()
     }
 
@@ -164,10 +175,11 @@ final class TransparentWindowRenderer: NSObject {
         var parallaxOffset = SIMD2<Float>(0, 0)
         var useFullscreen = true
 
-        let eyeDistance = context.perceptionState?.viewerPose.isValid == true
-            ? context.perceptionState!.viewerPose.eyeToScreenDistanceMeters
+        let viewerPose = resolvedViewerPose(for: context)
+        let eyeDistance = viewerPose?.isValid == true
+            ? viewerPose!.eyeToScreenDistanceMeters
             : PerceptionConfiguration.virtualEyeDistanceMeters
-        let windowMagnification = VirtualEyeGeometry.windowMagnification(
+        var windowMagnification = VirtualEyeGeometry.windowMagnification(
             snapshot: context.snapshot,
             eyeDistanceMeters: eyeDistance
         )
@@ -175,17 +187,29 @@ final class TransparentWindowRenderer: NSObject {
         if useReprojection, let reference {
             if PerceptionConfiguration.glassViewUsePlanarMotionWarp {
                 if let lockPosition {
-                    renderMode = context.perceptionState?.viewerPose.isValid == true
+                    if let previousLock = lastLockPosition,
+                       simd_length(lockPosition - previousLock) > 0.002 {
+                        parallaxSmoother.reset()
+                    }
+                    lastLockPosition = lockPosition
+
+                    renderMode = viewerPose?.isValid == true
                         ? "planarParallax+head"
                         : "planarParallax"
-                    parallaxOffset = VirtualEyeGeometry.combinedParallaxUVOffset(
+                    let rawOffset = VirtualEyeGeometry.combinedParallaxUVOffset(
                         snapshot: context.snapshot,
                         lockCameraPosition: lockPosition,
                         sceneDepthMeters: reference.sceneDepthMeters,
-                        viewerPose: context.perceptionState?.viewerPose,
+                        viewerPose: viewerPose,
                         lockedViewerLateral: context.lockedViewerLateral,
                         exaggerationGain: PerceptionConfiguration.glassViewWarpExaggerationGain
                     )
+                    let smoothed = parallaxSmoother.apply(
+                        offset: rawOffset,
+                        magnification: windowMagnification
+                    )
+                    parallaxOffset = smoothed.offset
+                    windowMagnification = smoothed.magnification
                 } else {
                     renderMode = "planarParallax (no lock)"
                 }
@@ -260,6 +284,14 @@ final class TransparentWindowRenderer: NSObject {
         commandBuffer.present(drawable)
         commandBuffer.commit()
         return (true, nil, renderMode, maxUVShiftPixels, reprojectionHits, gridPointCount, cameraDeltaMeters, windowMagnification)
+    }
+
+    private func resolvedViewerPose(for context: TransparentWindowDrawContext) -> ViewerPoseEstimate? {
+        if let live = context.liveViewerPose, live.isValid {
+            return live
+        }
+        guard let fused = context.perceptionState?.viewerPose, fused.isValid else { return nil }
+        return fused
     }
 
     /// Debug: WARP shifts the right half of the image — must be visible if Metal is on screen.

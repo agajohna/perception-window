@@ -93,6 +93,15 @@ final class PerceptionStateFusion {
         )
     }
 
+    func liveViewerPose() -> ViewerPoseEstimate {
+        let diag = resolvedViewerDiagnostics()
+        var pose = diag.estimate
+        if diag.secondsSinceFrame < 0 || diag.secondsSinceFrame > 0.55 {
+            pose = .invalid
+        }
+        return pose
+    }
+
     func update(from input: ARFrameFusionInput) -> PerceptionState {
         frameIndex &+= 1
 
