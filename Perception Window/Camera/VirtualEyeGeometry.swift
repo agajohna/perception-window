@@ -58,19 +58,79 @@ enum VirtualEyeGeometry {
             exaggerationGain: exaggerationGain
         )
 
-        guard PerceptionConfiguration.glassViewViewerPoseEnabled,
-              let viewerPose,
-              viewerPose.isValid,
-              let lockedViewerLateral else {
-            return offset
+        if PerceptionConfiguration.glassViewStaticEyeAlignmentEnabled {
+            let eyeDistance = viewerPose?.isValid == true
+                ? viewerPose!.eyeToScreenDistanceMeters
+                : PerceptionConfiguration.virtualEyeDistanceMeters
+            offset += staticEyeAlignmentUVOffset(
+                snapshot: snapshot,
+                sceneDepthMeters: sceneDepthMeters,
+                eyeDistanceMeters: eyeDistance
+            )
         }
 
-        offset += headParallaxUVOffset(
-            snapshot: snapshot,
-            viewerPose: viewerPose,
-            lockedViewerLateral: lockedViewerLateral
-        )
+        if PerceptionConfiguration.glassViewViewerPoseEnabled,
+           let viewerPose,
+           viewerPose.isValid,
+           let lockedViewerLateral {
+            offset += headParallaxUVOffset(
+                snapshot: snapshot,
+                viewerPose: viewerPose,
+                lockedViewerLateral: lockedViewerLateral
+            )
+        }
+
         return saturateParallaxOffset(offset)
+    }
+
+    /// Fixed camera-to-eye baseline at screen center — rear lens ≠ line of sight.
+    static func staticEyeAlignmentUVOffset(
+        snapshot: ARFrameSnapshot,
+        sceneDepthMeters: Float,
+        eyeDistanceMeters: Float
+    ) -> SIMD2<Float> {
+        let profile = DeviceOpticalProfile.current
+        let eyeLocal = profile.virtualEyeOffsetFromCamera(eyeDistanceMeters: eyeDistanceMeters)
+        let cameraTransform = snapshot.cameraTransform
+        let forward = cameraTransform.forward
+        let depth = alignmentSceneDepth(fusedMeters: sceneDepthMeters)
+
+        guard
+            let passthrough = passthroughUV(
+                u: 0.5,
+                v: 0.5,
+                inverseDisplayTransform: snapshot.inverseDisplayTransform
+            )
+        else {
+            return .zero
+        }
+
+        let virtualEyeWorld = cameraTransform.transformPoint(eyeLocal)
+        let screenCenterWorld = cameraTransform.transformPoint(profile.screenCenterOffsetFromCameraMeters)
+        let planeOrigin = cameraTransform.position + forward * depth
+        let rayDirection = simd_normalize(screenCenterWorld - virtualEyeWorld)
+
+        let offset: SIMD2<Float>
+        if
+            let worldPoint = intersectRay(
+                origin: virtualEyeWorld,
+                direction: rayDirection,
+                planeOrigin: planeOrigin,
+                planeNormal: forward
+            ),
+            let eyeUV = snapshot.imageUV(for: worldPoint)
+        {
+            offset = eyeUV - passthrough
+        } else {
+            offset = baselineStaticOffset(
+                snapshot: snapshot,
+                eyeLocal: eyeLocal,
+                sceneDepthMeters: depth
+            )
+        }
+
+        let strength = max(PerceptionConfiguration.glassViewStaticAlignmentStrength, 0)
+        return (offset + PerceptionConfiguration.glassViewAlignmentTrimUV) * strength
     }
 
     /// Head shift relative to phone since lock — opposite sign to phone motion convention.
@@ -101,12 +161,7 @@ enum VirtualEyeGeometry {
         exaggerationGain: Float = 1.0
     ) -> SIMD2<Float> {
         let delta = snapshot.cameraTransform.position - lockCameraPosition
-        let configuredDepth = PerceptionConfiguration.scenePlaneDepthMeters
-        // Prefer the tuned working distance when AR plane depth is farther (weakens parallax).
-        let depth = max(
-            min(sceneDepthMeters, configuredDepth),
-            PerceptionConfiguration.scenePlaneDepthMinimumMeters
-        )
+        let depth = alignmentSceneDepth(fusedMeters: sceneDepthMeters)
         let right = snapshot.cameraTransform.right
         let up = snapshot.cameraTransform.up
         let width = Float(snapshot.viewportSize.width)
@@ -116,11 +171,35 @@ enum VirtualEyeGeometry {
         let gain = max(exaggerationGain, 1.0)
         let strength = max(PerceptionConfiguration.glassViewMotionParallaxStrength, 0)
 
-        return saturateParallaxOffset(
-            SIMD2(
-                simd_dot(delta, right) / depth * focalX / width,
-                -simd_dot(delta, up) / depth * focalY / height
-            ) * gain * strength
+        return SIMD2(
+            simd_dot(delta, right) / depth * focalX / width,
+            -simd_dot(delta, up) / depth * focalY / height
+        ) * gain * strength
+    }
+
+    /// Blend fused depth toward the calibrated working distance for close hold tests.
+    private static func alignmentSceneDepth(fusedMeters: Float) -> Float {
+        let configured = PerceptionConfiguration.scenePlaneDepthMeters
+        let bias = min(max(PerceptionConfiguration.glassViewAlignmentDepthBias, 0), 1)
+        let blended = fusedMeters * (1 - bias) + configured * bias
+        return max(blended, PerceptionConfiguration.scenePlaneDepthMinimumMeters)
+    }
+
+    /// Pinhole fallback when the center eye-ray misses the scene plane.
+    private static func baselineStaticOffset(
+        snapshot: ARFrameSnapshot,
+        eyeLocal: SIMD3<Float>,
+        sceneDepthMeters: Float
+    ) -> SIMD2<Float> {
+        let depth = max(sceneDepthMeters, PerceptionConfiguration.scenePlaneDepthMinimumMeters)
+        let width = Float(snapshot.viewportSize.width)
+        let height = Float(snapshot.viewportSize.height)
+        let focalX = snapshot.projectionMatrix[0][0] * width * 0.5
+        let focalY = snapshot.projectionMatrix[1][1] * height * 0.5
+
+        return SIMD2(
+            eyeLocal.x / depth * focalX / width,
+            -eyeLocal.y / depth * focalY / height
         )
     }
 

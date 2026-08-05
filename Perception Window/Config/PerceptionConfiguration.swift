@@ -154,7 +154,7 @@ enum PerceptionConfiguration {
     static let glassViewFullReprojectionThreshold: Float = 0.45
     static let glassViewSimplifiedReprojectionThreshold: Float = 0.25
 
-    static let glassViewDebugMetricsEnabled = true
+    static let glassViewDebugMetricsEnabled = false
 
     /// Multiplies planar parallax — 1.0 ≈ physically correct at scene depth.
     static let glassViewWarpExaggerationGain: Float = 1.0
@@ -196,10 +196,22 @@ enum PerceptionConfiguration {
     static let glassViewWindowScaleEnabled = true
 
     /// Blend toward optically correct window scale (0 = camera FOV, 1 = full correction).
-    static let glassViewWindowScaleStrength: Float = 0.35
+    static let glassViewWindowScaleStrength: Float = 0.55
 
     /// Cap — full physical correction can require 5×+ crop on wide rear camera.
     static let glassViewWindowScaleMaximum: Float = 2.8
+
+    /// Correct for rear camera ≠ eye line-of-sight through the display center.
+    static let glassViewStaticEyeAlignmentEnabled = true
+
+    /// Scale on the static eye-camera baseline offset (fine tune after recenter).
+    static let glassViewStaticAlignmentStrength: Float = 1.0
+
+    /// Blend parallax depth toward `scenePlaneDepthMeters` (1 = always use configured).
+    static let glassViewAlignmentDepthBias: Float = 0.72
+
+    /// Manual UV trim after optical alignment — tune per scene if edges still slip.
+    static let glassViewAlignmentTrimUV = SIMD2<Float>(0, 0)
 
     #if os(iOS)
     static var deviceOpticalProfile: DeviceOpticalProfile {

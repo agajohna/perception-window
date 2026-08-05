@@ -122,7 +122,8 @@ struct ARKitTransparentWindowView: UIViewRepresentable {
                 reprojectionHits: drawResult.reprojectionHits,
                 gridPointCount: drawResult.gridPointCount,
                 cameraDeltaMeters: drawResult.cameraDeltaMeters,
-                windowMagnification: drawResult.windowMagnification
+                windowMagnification: drawResult.windowMagnification,
+                staticAlignPixels: drawResult.staticAlignPixels
             )
         }
 

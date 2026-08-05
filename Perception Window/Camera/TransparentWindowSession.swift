@@ -237,9 +237,13 @@ final class TransparentWindowSession: NSObject {
             )
             sceneReference = lockedReference
             fusionLock.unlock()
+            perceptionFusion.resetDepth(from: snapshot)
             captureWarpLockBaseline(from: snapshot, reference: lockedReference)
             fusionLock.lock()
-            if perceptionState.viewerPose.isValid {
+            let liveViewer = perceptionFusion.liveViewerPose()
+            if liveViewer.isValid {
+                lockedViewerLateral = liveViewer.lateralOffsetMeters
+            } else if perceptionState.viewerPose.isValid {
                 lockedViewerLateral = perceptionState.viewerPose.lateralOffsetMeters
             }
             fusionLock.unlock()
@@ -287,7 +291,8 @@ final class TransparentWindowSession: NSObject {
         reprojectionHits: Int,
         gridPointCount: Int,
         cameraDeltaMeters: Float,
-        windowMagnification: Float
+        windowMagnification: Float,
+        staticAlignPixels: Float
     ) {
         fusionLock.lock()
         debugMetrics.renderMode = presented ? renderMode : (failureReason ?? "draw failed")
@@ -296,6 +301,7 @@ final class TransparentWindowSession: NSObject {
         debugMetrics.reprojectionGridPoints = gridPointCount
         debugMetrics.cameraDeltaMeters = cameraDeltaMeters
         debugMetrics.windowMagnification = windowMagnification
+        debugMetrics.staticAlignPixels = staticAlignPixels
         debugMetrics.warpPreviewEnabled = warpPreviewEnabled
         debugMetrics.lastDrawFailure = failureReason ?? (presented ? "ok" : "unknown")
         fusionLock.unlock()

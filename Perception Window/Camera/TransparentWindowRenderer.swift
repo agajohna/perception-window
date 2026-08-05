@@ -129,7 +129,8 @@ final class TransparentWindowRenderer: NSObject {
         reprojectionHits: Int,
         gridPointCount: Int,
         cameraDeltaMeters: Float,
-        windowMagnification: Float
+        windowMagnification: Float,
+        staticAlignPixels: Float
     ) {
         let reference = context.warpEnabled ? context.sceneReference : nil
         let lockPosition = context.lockedCameraPosition ?? reference?.anchorCameraPosition
@@ -156,12 +157,12 @@ final class TransparentWindowRenderer: NSObject {
             } else {
                 reason = "no command buffer"
             }
-            return (false, reason, "none", 0, 0, 0, cameraDeltaMeters, 1)
+            return (false, reason, "none", 0, 0, 0, cameraDeltaMeters, 1, 0)
         }
 
         let viewportSize = context.snapshot.viewportSize
         guard viewportSize.width > 0, viewportSize.height > 0 else {
-            return (false, "zero viewport", "none", 0, 0, 0, cameraDeltaMeters, 1)
+            return (false, "zero viewport", "none", 0, 0, 0, cameraDeltaMeters, 1, 0)
         }
 
         let useReprojection = reprojectionEnabled
@@ -174,6 +175,7 @@ final class TransparentWindowRenderer: NSObject {
         var gridPointCount = 0
         var parallaxOffset = SIMD2<Float>(0, 0)
         var useFullscreen = true
+        var staticAlignPixels: Float = 0
 
         let viewerPose = resolvedViewerPose(for: context)
         let eyeDistance = viewerPose?.isValid == true
@@ -204,6 +206,16 @@ final class TransparentWindowRenderer: NSObject {
                         lockedViewerLateral: context.lockedViewerLateral,
                         exaggerationGain: PerceptionConfiguration.glassViewWarpExaggerationGain
                     )
+                    if PerceptionConfiguration.glassViewStaticEyeAlignmentEnabled {
+                        let staticOffset = VirtualEyeGeometry.staticEyeAlignmentUVOffset(
+                            snapshot: context.snapshot,
+                            sceneDepthMeters: reference.sceneDepthMeters,
+                            eyeDistanceMeters: eyeDistance
+                        )
+                        let width = Float(context.snapshot.viewportSize.width)
+                        let height = Float(context.snapshot.viewportSize.height)
+                        staticAlignPixels = hypot(staticOffset.x * width, staticOffset.y * height)
+                    }
                     let smoothed = parallaxSmoother.apply(
                         offset: rawOffset,
                         magnification: windowMagnification
@@ -236,14 +248,14 @@ final class TransparentWindowRenderer: NSObject {
         guard let texture = makeTexture(from: context.pixelBuffer) else {
             let format = CVPixelBufferGetPixelFormatType(context.pixelBuffer)
             let reason = "texture upload failed (fmt \(format))"
-            return (false, reason, renderMode, maxUVShiftPixels, reprojectionHits, gridPointCount, cameraDeltaMeters, windowMagnification)
+            return (false, reason, renderMode, maxUVShiftPixels, reprojectionHits, gridPointCount, cameraDeltaMeters, windowMagnification, staticAlignPixels)
         }
 
         passDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
         passDescriptor.colorAttachments[0].loadAction = .clear
 
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: passDescriptor) else {
-            return (false, "no encoder", renderMode, maxUVShiftPixels, reprojectionHits, gridPointCount, cameraDeltaMeters, windowMagnification)
+            return (false, "no encoder", renderMode, maxUVShiftPixels, reprojectionHits, gridPointCount, cameraDeltaMeters, windowMagnification, staticAlignPixels)
         }
 
         if useFullscreen {
@@ -264,7 +276,7 @@ final class TransparentWindowRenderer: NSObject {
             guard let vertexBuffer, let indexBuffer else {
                 encoder.endEncoding()
                 let reason = vertexBuffer == nil ? "no vertex buffer" : "no index buffer"
-                return (false, reason, renderMode, maxUVShiftPixels, reprojectionHits, gridPointCount, cameraDeltaMeters, windowMagnification)
+                return (false, reason, renderMode, maxUVShiftPixels, reprojectionHits, gridPointCount, cameraDeltaMeters, windowMagnification, staticAlignPixels)
             }
             encoder.setRenderPipelineState(pipelineState)
             encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
@@ -283,7 +295,7 @@ final class TransparentWindowRenderer: NSObject {
 
         commandBuffer.present(drawable)
         commandBuffer.commit()
-        return (true, nil, renderMode, maxUVShiftPixels, reprojectionHits, gridPointCount, cameraDeltaMeters, windowMagnification)
+        return (true, nil, renderMode, maxUVShiftPixels, reprojectionHits, gridPointCount, cameraDeltaMeters, windowMagnification, staticAlignPixels)
     }
 
     private func resolvedViewerPose(for context: TransparentWindowDrawContext) -> ViewerPoseEstimate? {

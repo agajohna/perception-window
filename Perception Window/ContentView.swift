@@ -10,6 +10,7 @@ struct ContentView: View {
     @Bindable var transparentWindow: TransparentWindowSession
     @State private var perception = PerceptionViewModel()
     @State private var perceptualWindow = PerceptualWindowStabilizer()
+    @State private var glassViewDebugVisible = false
 
     var body: some View {
         ZStack {
@@ -33,7 +34,7 @@ struct ContentView: View {
                     .foregroundStyle(.white.opacity(0.5))
             }
 
-            if PerceptionConfiguration.glassViewDebugMetricsEnabled {
+            if glassViewDebugVisible {
                 GlassViewDebugOverlay(session: transparentWindow)
             }
             #endif
@@ -76,7 +77,7 @@ struct ContentView: View {
         }
         .onTapGesture(count: 3) {
             guard PerceptionConfiguration.usesViewpointReprojection else { return }
-            transparentWindow.toggleWarpPreview()
+            glassViewDebugVisible.toggle()
         }
     }
 

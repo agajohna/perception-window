@@ -37,6 +37,7 @@ struct GlassViewDebugMetrics: Sendable {
     var renderMode: String = "none"
     var cameraDeltaMeters: Float = 0
     var windowMagnification: Float = 1
+    var staticAlignPixels: Float = 0
     var lastDrawFailure: String = "starting"
 
     static let empty = GlassViewDebugMetrics()
@@ -63,6 +64,7 @@ struct GlassViewDebugMetrics: Sendable {
         front last frame: \(frameAge)
         eye distance: \(String(format: "%.3f", estimatedEyeDistanceMeters)) m
         window scale: \(String(format: "%.2f", windowMagnification))×
+        static align: \(String(format: "%.1f", staticAlignPixels)) px
         scene depth: \(String(format: "%.3f", estimatedSceneDepthMeters)) m (\(sceneDepthSource))
         rear sources: \(activeRearCameraSources)
         reproj error: \(String(format: "%.3f", reprojectionErrorEstimate))
